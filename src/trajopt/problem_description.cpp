@@ -54,6 +54,8 @@ void RegisterMakers() {
   TermInfo::RegisterMaker("cart_vel", &CartVelCntInfo::create);
   TermInfo::RegisterMaker("joint_vel_limits", &JointVelConstraintInfo::create);
 
+  TermInfo::RegisterMaker("uncertain_obstacles", &CollisionChanceConstraintInfo::create);
+
   gRegisteredMakers = true;
 }
 
@@ -573,6 +575,68 @@ void JointConstraintInfo::hatch(TrajOptProb& prob) {
   int n_dof = vars.size();
   for (int j=0; j < n_dof; ++j) {
     prob.addLinearConstraint(exprSub(AffExpr(vars[j]), vals[j]), EQ);    
+  }
+}
+
+
+
+
+
+void CollisionChanceConstraintInfo::fromJson(const Value& v) {
+  FAIL_IF_FALSE(v.isMember("params"));
+  const Value& params = v["params"];
+
+  // Extract waypoint risk tolerances
+  int n_steps = gPCI->basic_info.n_steps;
+  childFromJson(params, waypoint_risk_tolerances, "waypoint_risk_tolerances");
+  if (waypoint_risk_tolerances.size() == 1) {
+    waypoint_risk_tolerances = DblVec(n_steps, waypoint_risk_tolerances[0]);
+  }
+  else if (waypoint_risk_tolerances.size() != n_steps) {
+    PRINT_AND_THROW (boost::format(
+      "wrong size: waypoint_risk_tolerances. expected %i got %i")%n_steps%waypoint_risk_tolerances.size());
+  }
+
+  // Extract obstacles
+  childFromJson(params, uncertain_body_names,"uncertain_body_names");
+  int n_bodies = uncertain_body_names.size();
+
+  // Extract covariance matrices for uncertain body positions
+  // First get the squashed versions (specifying only the 6 symmetric elements)
+  std::vector<DblVec> location_covariances_squashed;
+  childFromJson(params, location_covariances_squashed, "location_covariances");
+  FAIL_IF_FALSE(location_covariances_squashed.size() == n_bodies);
+  // Now unpack the squashed versions into full Matrix3d instances
+  location_covariances.clear();
+  location_covariances.reserve(n_bodies);
+  for (DblVec single_squashed_covariance : location_covariances_squashed) {
+    Matrix3d location_covariance;
+    // The single_squashed_covariance contains the 6 symmetric elements of the covariance matrix:
+    // [0 1 2]
+    // [1 3 4]
+    // [2 4 5]
+    location_covariance << single_squashed_covariance[0], single_squashed_covariance[1], single_squashed_covariance[2],
+                           single_squashed_covariance[1], single_squashed_covariance[3], single_squashed_covariance[4],
+                           single_squashed_covariance[2], single_squashed_covariance[4], single_squashed_covariance[5];
+    location_covariances.push_back(location_covariance);
+  }
+  
+  const char* all_fields[] = {"uncertain_body_names", "location_covariances", "waypoint_risk_tolerances"};
+  ensure_only_members(params, all_fields, sizeof(all_fields)/sizeof(char*));
+}
+
+void CollisionChanceConstraintInfo::hatch(TrajOptProb& prob) {
+  int n_steps = gPCI->basic_info.n_steps;
+  for (int i=0; i < n_steps; ++i) {
+    prob.addIneqConstraint(ConstraintPtr(
+      new CollisionChanceConstraint(
+        uncertain_body_names,
+        location_covariances,
+        waypoint_risk_tolerances[i],
+        prob.GetRAD(),
+        prob.GetVarRow(i))
+    ));
+    prob.getIneqConstraints().back()->setName( (boost::format("%s_%i")%name%i).str() );
   }
 }
 

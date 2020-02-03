@@ -11,6 +11,7 @@
 #include <utils/stl_to_string.hpp>
 #include "utils/logging.hpp"
 #include "openrave_userdata_utils.hpp"
+#include "proximityAlert.h"
 using namespace util;
 using namespace std;
 using namespace trajopt;
@@ -365,6 +366,11 @@ public:
   virtual void ContinuousCheckTrajectory(const TrajArray& traj, Configuration& rad, vector<Collision>&);
   virtual void CastVsAll(Configuration& rad, const vector<KinBody::LinkPtr>& links, const DblVec& startjoints, const DblVec& endjoints, vector<Collision>& collisions);
   ////
+
+  // Risk estimation
+  virtual void LinksVsAllRiskEstimate(const vector<KinBody::LinkPtr>& links, vector<RiskQueryResult>& risks, short filterMask, std::map<const OR::KinBody::Link*, Matrix3d> link2covariance, double precision);
+  virtual void LinkVsAllRiskEstimate(const KinBody::LinkPtr link, vector<RiskQueryResult>& risks, short filterMask, Matrix3d& covariance, double precision);
+  virtual void LinkVsAllRiskEstimate_NoUpdate(const KinBody::Link& link, vector<RiskQueryResult>& risks, short filterMask, Matrix3d& covariance, double precision);
   ///////
 
   CollisionObjectWrapper* GetCow(const KinBody::Link* link) {
@@ -522,6 +528,104 @@ void BulletCollisionChecker::LinkVsAll_NoUpdate(const KinBody::Link& link, vecto
   cc.m_collisionFilterMask = filterMask;
   m_world->contactTest(cow, cc);
 }
+
+
+/////////////////////////////
+// Risk-aware section starts
+/////////////////////////////
+
+/**
+ * Estimate the risk of collision between all given uncertain link and all robot links. Updates the Bullet scene to match the OpenRAVE configuration first.
+ *
+ * @param links: a vector of uncertain links 
+ * @param risks: a vector of RiskQueryResult objects that will be filled with the result of the risk query on link
+ * @param filterMask: a bitmask that should match only robot links (or generally, all links against which this link might collide)
+ *                    Typically set to RobotGroup, since it doesn't make sense to worry about obstacle-obstacle collisions (since we don't control those)
+ * @param covariances: a map from link pointers to the 3x3 matrix of doubles containing the covariance matrix of the Gaussian uncertainty in each link's location
+ * @param precision: The desired precision tolerance. True risk is guaranteed to be no more than precision/2 above the estimate.
+ *
+ * @returns void, but adds elements to risks to store its results.
+ */
+void BulletCollisionChecker::LinksVsAllRiskEstimate(const vector<KinBody::LinkPtr>& links, vector<RiskQueryResult>& risks, short filterMask, std::map<const OR::KinBody::Link*, Matrix3d> link2covariance, double precision) {
+  UpdateBulletFromRave();
+  m_world->updateAabbs();
+  
+  for (int i=0; i < links.size(); ++i) {
+    LinkVsAllRiskEstimate_NoUpdate(*links[i], risks, filterMask, link2covariance.find(links[i].get())->second, precision);
+  }
+}
+
+/**
+ * Estimate the risk of collision between the given uncertain link and all robot links. Updates the Bullet scene to match the OpenRAVE configuration first.
+ *
+ * @param link: the uncertain link 
+ * @param risks: a vector of RiskQueryResult objects that will be filled with the result of the risk query on link
+ * @param filterMask: a bitmask that should match only robot links (or generally, all links against which this link might collide)
+ *                    Typically set to RobotGroup, since it doesn't make sense to worry about obstacle-obstacle collisions (since we don't control those)
+ * @param covariance: a 3x3 matrix of doubles containing the covariance matrix of the Gaussian uncertainty in link's location
+ * @param precision: The desired precision tolerance. True risk is guaranteed to be no more than precision/2 above the estimate.
+ *
+ * @returns void, but adds elements to risks to store its results.
+ */
+void BulletCollisionChecker::LinkVsAllRiskEstimate(const KinBody::LinkPtr link, vector<RiskQueryResult>& risks, short filterMask, Matrix3d& covariance, double precision) {
+  UpdateBulletFromRave();
+  LinkVsAllRiskEstimate_NoUpdate(*link, risks, filterMask, covariance, precision);
+}
+
+/**
+ * Estimate the risk of collision between the given uncertain link and all robot links. DOES NOT update the Bullet scene to match OpenRAVE first.
+ *
+ * @param link: the uncertain link 
+ * @param risks: a vector of RiskQueryResult objects that will be filled with the result of the risk query on link
+ * @param filterMask: a bitmask that should match only robot links (or generally, all links against which this link might collide)
+ *                    Typically set to RobotGroup, since it doesn't make sense to worry about obstacle-obstacle collisions (since we don't control those)
+ * @param covariance: a 3x3 matrix of doubles containing the covariance matrix of the Gaussian uncertainty in link's location
+ * @param precision: The desired precision tolerance. True risk is guaranteed to be no more than precision/2 above the estimate.
+ *
+ * @returns void, but adds elements to risks to store its results.
+ */
+void BulletCollisionChecker::LinkVsAllRiskEstimate_NoUpdate(const KinBody::Link& link, vector<RiskQueryResult>& risks, short filterMask, Matrix3d& covariance, double precision) {
+  // Get the collision object associated with this link
+  if (link.GetGeometries().empty()) return;
+  CollisionObjectWrapper* cow = GetCow(&link);
+  
+  LOG_DEBUG("Checking link %s", link.GetName().c_str())
+  LOG_DEBUG("Covariance:\n[%.2f, %.2f, %.2f]\n[%.2f, %.2f, %.2f]\n[%.2f, %.2f, %.2f]", covariance(0, 0), covariance(0, 1), covariance(0, 2), covariance(1, 0), covariance(1, 1), covariance(1, 2), covariance(2, 0), covariance(2, 1), covariance(2, 2))
+  LOG_DEBUG("Precision %.8f", precision);
+  LOG_DEBUG("Filter Group %d", filterMask);
+  // Pass that collision object to the proximity alert algorithms
+  ProximityAlert::ProbabilityBoundWithGradientInfoCombined result;
+  result = ProximityAlert::compute_collision_probability_bound_and_gradient(
+    cow,
+    covariance,
+    precision,
+    m_world,
+    filterMask);
+  LOG_DEBUG("ProximityAlert finished: %0.5f", result.epsilon);
+
+  // Now we need to add the risk result to the supplied vector
+  // This involves a lot of "tab A -> slot B" to get all the data transferred.
+  // We can also only fill out most of it if epsilon is not zero
+  if (result.epsilon > precision) {
+    risks.push_back(RiskQueryResult(
+      getLink(result.one_shot_result.collider),
+      getLink(result.two_shot_result.collider),
+      &link,
+      toOR(result.one_shot_result.contact_point_on_robot),
+      toOR(result.two_shot_result.contact_point_on_robot),
+      result.epsilon,
+      result.one_shot_result.d_epsilon_d_x,
+      result.two_shot_result.d_epsilon_d_x,
+      result.one_shot_result.contact_normal_into_robot,
+      result.two_shot_result.contact_normal_into_robot));
+  } else {
+    risks.push_back(RiskQueryResult(result.epsilon));
+  }
+}
+
+/////////////////////////////
+// Risk-aware section ends
+/////////////////////////////
 
 struct KinBodyCollisionData;
 typedef boost::shared_ptr<KinBodyCollisionData> CDPtr;

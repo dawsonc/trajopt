@@ -282,14 +282,15 @@ Only considers the risk of collision due to uncertainty in obstacle location.
 */
 struct CollisionChanceConstraintInfo : public TermInfo, public MakesConstraint {
   /// The names of the uncertain KinBodies
-  std::vector<std::string> uncertain_body_names;
+  std::vector<string> uncertain_body_names;
   /// The covariance matrices associated with the uncertain KinBodies. Must have same length as uncertain_body_names
   std::vector<Matrix3d> location_covariances;
   /// Individual risk tolerances. list of length 1 automatically gets expanded to list of length n_timesteps
   DblVec waypoint_risk_tolerances;
+  double precision;
   void fromJson(const Value& v);
   void hatch(TrajOptProb& prob);
-  DEFINE_CREATE(JointVelConstraintInfo)
+  DEFINE_CREATE(CollisionChanceConstraintInfo)
 };
 
 

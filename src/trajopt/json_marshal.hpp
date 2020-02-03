@@ -5,6 +5,7 @@
 #include <string>
 #include <sstream>
 #include "macros.h"
+#include "utils/logging.hpp"
 
 
 namespace json_marshal {
@@ -13,6 +14,11 @@ TRAJOPT_API void fromJson(const Json::Value& v, bool& ref);
 TRAJOPT_API void fromJson(const Json::Value& v, int& ref);
 TRAJOPT_API void fromJson(const Json::Value& v, double& ref);
 TRAJOPT_API void fromJson(const Json::Value& v, std::string& ref);
+
+// Need to declare this here so we can correctly deal with nested vectors
+template <class T>
+inline void fromJson(const Json::Value& v, std::vector<T>& ref);
+
 template <class T>
 inline void fromJson(const Json::Value& v, T& ref) {
   ref.fromJson(v);

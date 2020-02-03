@@ -1,8 +1,8 @@
 <Environment>
   <KinBody name="table">
     <Body type="static" name="table_link">
+      <Translation> 1.1 0 .635 </Translation>
       <Geom type="box">
-        <Translation> 1.1 0 .635 </Translation>
         <extents> .85 .55 .01 </extents>
       </Geom>
     </Body>

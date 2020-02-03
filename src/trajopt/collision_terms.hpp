@@ -9,6 +9,7 @@
 namespace trajopt {
 
 typedef std::map<const OR::KinBody::Link*, int> Link2Int;
+typedef std::map<const OR::KinBody::Link*, Matrix3d> Link2Matrix3d;
 
 
 struct CollisionEvaluator {
@@ -101,6 +102,80 @@ private:
   CollisionEvaluatorPtr m_calc;
   double m_dist_pen;
   double m_coeff;
+};
+
+
+/////////////////////////////////////////////////////////
+// Risk-aware section starts here.
+/////////////////////////////////////////////////////////
+
+struct CollisionRiskEvaluator {
+  virtual void CalcRiskExpressions(const DblVec& x, vector<AffExpr>& exprs) = 0;
+  virtual void CalcRisks(const DblVec& x, DblVec& exprs) = 0;
+  virtual void PerformRiskCheck(const DblVec& x, vector<RiskQueryResult>& risks) = 0;
+  void GetRisksCached(const DblVec& x, vector<RiskQueryResult>&);
+  virtual ~CollisionRiskEvaluator() {}
+  virtual VarVector GetVars()=0;
+
+  Cache<size_t, vector<RiskQueryResult>, 3> m_cache;
+};
+typedef boost::shared_ptr<CollisionRiskEvaluator> CollisionRiskEvaluatorPtr;
+
+
+struct SingleTimestepCollisionRiskEvaluator : public CollisionRiskEvaluator {
+public:
+  SingleTimestepCollisionRiskEvaluator(std::vector<std::string> uncertain_body_names,
+                                       std::vector<Matrix3d> location_covariances,
+                                       double precision,
+                                       ConfigurationPtr rad,
+                                       const VarVector& vars);
+  /**
+  @brief linearize all risk estimates in terms of robot dofs
+  
+  Do a risk query check between robot and uncertain robots in the environment.
+  For each risk estimate generated, return a linearization of the risk estimate
+  */
+  void CalcRiskExpressions(const DblVec& x, vector<AffExpr>& exprs);
+  /**
+   * Same as CalcDistExpressions, but just the distances--not the expressions
+   */
+  void CalcRisks(const DblVec& x, DblVec& risks);
+  void PerformRiskCheck(const DblVec& x, vector<RiskQueryResult>& risks);
+  VarVector GetVars() {return m_vars;}
+
+  OR::EnvironmentBasePtr m_env;
+  CollisionCheckerPtr m_cc;
+  ConfigurationPtr m_rad;
+  VarVector m_vars;
+  Link2Int m_link2ind;
+  Link2Matrix3d m_link2covariance;
+  vector<OR::KinBody::LinkPtr> m_links;
+  short m_filterMask;
+  double m_precision;
+};
+
+
+class TRAJOPT_API CollisionChanceConstraint : public IneqConstraint {
+public:
+  /* constructor for single timestep */
+  CollisionChanceConstraint(std::vector<std::string> uncertain_body_names,
+                            std::vector<Matrix3d> location_covariances,
+                            double risk_tolerance,
+                            double required_precision,
+                            ConfigurationPtr rad,
+                            const VarVector& vars);
+
+  virtual ConvexConstraintsPtr convex(const vector<double>& x, Model* model);
+  virtual DblVec value(const vector<double>&);
+
+  void Plot(const DblVec& x, OR::EnvironmentBase& env, std::vector<OR::GraphHandlePtr>& handles);
+  VarVector getVars() {return m_calc->GetVars();}
+private:
+  CollisionRiskEvaluatorPtr m_calc;
+
+  std::vector<std::string> m_uncertain_body_names;
+  std::vector<Matrix3d> m_location_covariances;
+  double m_risk_tolerance;
 };
 
 }

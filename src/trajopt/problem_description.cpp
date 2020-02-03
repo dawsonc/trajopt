@@ -289,6 +289,7 @@ TrajOptProbPtr ConstructProblem(const ProblemConstructionInfo& pci) {
     ci->hatch(*prob);
   }
   BOOST_FOREACH(const TermInfoPtr& ci, pci.cnt_infos) {
+    LOG_DEBUG("Hatching %s constraint", ci->name.c_str());
     ci->hatch(*prob);
   }
 
@@ -601,6 +602,9 @@ void CollisionChanceConstraintInfo::fromJson(const Value& v) {
   childFromJson(params, uncertain_body_names,"uncertain_body_names");
   int n_bodies = uncertain_body_names.size();
 
+  // Extract precision tolerance
+  childFromJson(params, precision, "precision");
+
   // Extract covariance matrices for uncertain body positions
   // First get the squashed versions (specifying only the 6 symmetric elements)
   std::vector<DblVec> location_covariances_squashed;
@@ -609,7 +613,7 @@ void CollisionChanceConstraintInfo::fromJson(const Value& v) {
   // Now unpack the squashed versions into full Matrix3d instances
   location_covariances.clear();
   location_covariances.reserve(n_bodies);
-  for (DblVec single_squashed_covariance : location_covariances_squashed) {
+  BOOST_FOREACH(DblVec single_squashed_covariance, location_covariances_squashed) {
     Matrix3d location_covariance;
     // The single_squashed_covariance contains the 6 symmetric elements of the covariance matrix:
     // [0 1 2]
@@ -621,23 +625,27 @@ void CollisionChanceConstraintInfo::fromJson(const Value& v) {
     location_covariances.push_back(location_covariance);
   }
   
-  const char* all_fields[] = {"uncertain_body_names", "location_covariances", "waypoint_risk_tolerances"};
+  const char* all_fields[] = {"uncertain_body_names", "location_covariances", "waypoint_risk_tolerances", "precision"};
   ensure_only_members(params, all_fields, sizeof(all_fields)/sizeof(char*));
 }
 
 void CollisionChanceConstraintInfo::hatch(TrajOptProb& prob) {
-  int n_steps = gPCI->basic_info.n_steps;
+  LOG_DEBUG("Hatching...");
+  int n_steps = waypoint_risk_tolerances.size();
+  LOG_DEBUG("Adding %d chance constraints...", n_steps);
   for (int i=0; i < n_steps; ++i) {
     prob.addIneqConstraint(ConstraintPtr(
       new CollisionChanceConstraint(
         uncertain_body_names,
         location_covariances,
         waypoint_risk_tolerances[i],
+        precision,
         prob.GetRAD(),
         prob.GetVarRow(i))
     ));
     prob.getIneqConstraints().back()->setName( (boost::format("%s_%i")%name%i).str() );
   }
+  LOG_DEBUG("Done adding chance constraints.")
 }
 
 

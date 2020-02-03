@@ -13,7 +13,7 @@ endif()
 
 add_library(trajopt
 	traj_plotter.cpp
-  trajectory_costs.cpp
+    trajectory_costs.cpp
 	kinematic_terms.cpp 
 	collision_terms.cpp
 	json_marshal.cpp
@@ -25,13 +25,13 @@ add_library(trajopt
 	collision_checker.cpp
 	plot_callback.cpp
 	bullet_unity.cpp
+    proximityAlert.h
+    cutoffSphere.h
 )
-target_link_libraries(trajopt ${OpenRAVE_BOTH_LIBRARIES} ${Boost_SYSTEM_LIBRARY} sco utils json osgviewer)
+target_link_libraries(trajopt ${OpenRAVE_BOTH_LIBRARIES} ${Boost_SYSTEM_LIBRARY} sco utils json osgviewer ${BULLET_LIBRARIES})
 
 add_subdirectory(test)
 
 include_directories(${PYTHON_NUMPY_INCLUDE_DIR})
 boost_python_module(ctrajoptpy trajoptpy.cpp)
 target_link_libraries(ctrajoptpy trajopt ${Boost_SYSTEM_LIBRARY} )
-
-

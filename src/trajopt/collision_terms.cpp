@@ -261,6 +261,309 @@ DblVec CollisionConstraint::value(const vector<double>& x) {
   return out;
 }
 
+/////////////////////////////////////////////////////////
+// Risk-aware section starts here.
+/////////////////////////////////////////////////////////
+
+/**
+ * Constructor for the collision chance constraint
+ *
+ * @param uncertain_body_names: the names of the bodies representing uncertain obstacles
+ * @param location_covariances: the covariance matrices of the Gaussian uncertainty in the location of the
+ *                              corresponding uncertain bodies. Must have the same length as uncertain_body_names
+ * @param risk_tolerance: a double representing the maximum allowable risk at this time step.
+ * @param precision: a double representing the desired precision tolerance in our risk estimates. True risk is guaranteed
+ *                   not to exceed the estimate by more than precision/2.
+ * @param rad: a pointer to the configuration of the robot and evironment.
+ * @param vars: a vector of variables to be used in constructing symbolic expressions for linearized risk.
+ */
+CollisionChanceConstraint::CollisionChanceConstraint(std::vector<std::string> uncertain_body_names,
+                                                     std::vector<Matrix3d> location_covariances,
+                                                     double risk_tolerance,
+                                                     double required_precision,
+                                                     ConfigurationPtr rad,
+                                                     const VarVector& vars) :
+    m_calc(new SingleTimestepCollisionRiskEvaluator(uncertain_body_names, location_covariances, required_precision, rad, vars)),
+    m_uncertain_body_names(uncertain_body_names),
+    m_location_covariances(location_covariances),
+    m_risk_tolerance(risk_tolerance)
+{
+  name_="collision";
+}
+
+
+/**
+ * Convexify the constraint with the given values for the degrees of freedom, yielding symbolic expressions in terms
+ * of the given model
+ *
+ * @param x: a vector of doubles containing the current values of the degrees of freedom (i.e. \theta_0)
+ * @param model: the model with which to construct the convexified expressions.
+ *
+ * @returns a pointer to the convexified constraint.
+ */
+ConvexConstraintsPtr CollisionChanceConstraint::convex(const vector<double>& x, Model* model) {
+  // Set up the convexified constraint object
+  ConvexConstraintsPtr out(new ConvexConstraints(model));
+
+  // Get the linearized risk expressions
+  vector<AffExpr> exprs;
+  m_calc->CalcRiskExpressions(x, exprs);
+
+  // Accumulate the risks into a single constraint
+  AffExpr risk_violation(-1.0*m_risk_tolerance);
+  for (int i=0; i < exprs.size(); ++i) {
+    // Add this risk expression to the risk violation expression
+    exprInc(risk_violation, exprs[i]);
+  }
+  // Add the accumulated constraint to the model
+  out->addIneqCnt(risk_violation);
+  return out;
+}
+
+/**
+ * Evaluate the constraint with the given values for the degrees of freedom.
+ *
+ * @param x: a vector of doubles containing the current values of the degrees of freedom (i.e. \theta_0)
+ *
+ * @returns a vector of doubles with one element representing the total risk at this timestep:
+ *
+ * The constraint is (summed over all obstacles)
+ *          risk_tolerance - risk >= 0
+ * but we relax it using the hingle loss to be
+ *          |risk - risk_tolerance|^+
+ */
+DblVec CollisionChanceConstraint::value(const vector<double>& x) {
+  // Start by getting the risk estimates
+  DblVec risks;
+  m_calc->CalcRisks(x, risks);
+
+  // Now compute the relaxed hinge-loss penalties
+  DblVec out(1);
+  out[0] = 0;
+  for (int i=0; i < risks.size(); ++i) {
+    out[0] += pospart(risks[i] - m_risk_tolerance);
+  }
+  LOG_DEBUG("+++++ RISK VIOLATION %.8f", out[0]);
+  return out;
+}
+
+
+/**
+ * Constructor for the SingleTimestepCollisionRiskEvaluator class, which is an object used to evaluate
+ * the risk of collision between the robot and all uncertain obstacles at a single timestep.
+ *
+ * @param uncertain_body_names: the names of the bodies representing uncertain obstacles
+ * @param location_covariances: the covariance matrices of the Gaussian uncertainty in the location of the
+ *                              corresponding uncertain bodies. Must have the same length as uncertain_body_names
+ * @param precision: a double representing the desired precision tolerance in our risk estimates. True risk is guaranteed
+ *                   not to exceed the estimate by more than precision/2.
+ * @param rad: a pointer to the configuration of the robot and evironment.
+ * @param vars: a vector of variables to be used in constructing symbolic expressions for linearized risk.
+ */
+SingleTimestepCollisionRiskEvaluator::SingleTimestepCollisionRiskEvaluator(
+    std::vector<std::string> uncertain_body_names,
+    std::vector<Matrix3d> location_covariances,
+    double precision,
+    ConfigurationPtr rad,
+    const VarVector& vars) :
+  m_env(rad->GetEnv()),
+  m_cc(CollisionChecker::GetOrCreate(*m_env)),
+  m_rad(rad),
+  m_vars(vars),
+  m_link2ind(),
+  m_link2covariance(),
+  m_links(),
+  m_filterMask(RobotFilter),
+  m_precision(precision)
+{
+  // Find uncertain links by body name
+  vector<int> inds;
+  vector<Matrix3d> covariances;
+  int body_index = 0;
+
+  // Match links to covariances
+  BOOST_FOREACH(std::string body_name, uncertain_body_names) {
+    BOOST_FOREACH(const KinBody::LinkPtr& link, m_env->GetKinBody(body_name)->GetLinks()) {
+      if (!link->GetGeometries().empty()) {
+        m_links.push_back(link);
+        inds.push_back(link->GetIndex());
+        covariances.push_back(location_covariances[body_index]);
+      }
+    }
+
+    ++body_index;
+  }
+
+  // For easy access, save the OpenRAVE index and covariance matrix of each link in a map
+  for (int i=0; i < m_links.size(); ++i) {
+    m_link2ind[m_links[i].get()] = inds[i];
+    m_link2covariance[m_links[i].get()] = covariances[i];
+  }
+}
+
+
+/**
+ * Serves as a wrapper for the PerformRiskCheck function, caching results of previous queries to give
+ * performance benefits.
+ *
+ * @param x: a vector of doubles containing the current values of the degrees of freedom (i.e. \theta_0)
+ * @param risks: a vector of RiskQueryResult structs into which we will put the results of the risk query.
+ *               These structs contain both the risk estimate itself and information for computing the gradient.
+ *
+ * @returns void, but risks will be cleared and then filled with the risk query results.
+ */
+void CollisionRiskEvaluator::GetRisksCached(const DblVec& x, vector<RiskQueryResult>& risks) {
+  double key = hash(getDblVec(x, GetVars()));
+  vector<RiskQueryResult>* it = m_cache.get(key);
+  if (it != NULL) {
+    LOG_DEBUG("using cached risk query result\n");
+    risks = *it;
+  }
+  else {
+    LOG_DEBUG("not using cached risk query result\n");
+    PerformRiskCheck(x, risks);
+    m_cache.put(key, risks);
+  }
+}
+
+/**
+ * Calls the ProximityAlert risk estimation via the collision checker to estimate the risks of collision
+ * between the robot and uncertain obstacles.
+ *
+ * @param x: a vector of doubles containing the current values of the degrees of freedom (i.e. \theta_0)
+ * @param risks: a vector of RiskQueryResult structs into which we will put the results of the risk query.
+ *               These structs contain both the risk estimate itself and information for computing the gradient.
+ *
+ * @returns void, but risks will be cleared and then filled with the risk query results.
+ */
+void SingleTimestepCollisionRiskEvaluator::PerformRiskCheck(const DblVec& x, vector<RiskQueryResult>& risks) {
+  DblVec dofvals = getDblVec(x, m_vars);
+  m_rad->SetDOFValues(dofvals);
+  m_cc->LinksVsAllRiskEstimate(m_links, risks, m_filterMask, m_link2covariance, m_precision);
+}
+
+/**
+ * Compute the risks of collision between the robot and each uncertain obstacle. Will use cached values if
+ * possible; otherwise, will use the ProximityAlert epsilon-shadow algorithm to estimate the risk.
+ *
+ * @param x: a vector of doubles containing the current values of the degrees of freedom (i.e. \theta_0)
+ * @param risks: a vector of doubles into which we will put the risk estimates
+ *
+ * @returns void, but risks will be cleared and then filled with the risk estimates.
+ */
+void SingleTimestepCollisionRiskEvaluator::CalcRisks(const DblVec& x, DblVec& risks) {
+  vector<RiskQueryResult> risk_query_results;
+  GetRisksCached(x, risk_query_results);
+
+  // Extract risk measures from risk_query_results
+  risks.clear();
+  BOOST_FOREACH(const RiskQueryResult& risk_result, risk_query_results) {
+    risks.push_back(risk_result.epsilon);
+  }
+}
+
+/**
+ * Construct symbolic expressions for the linearized collision risks at this single timestep.
+ *
+ * Begins by computing the risk of collision between each uncertain obstacle and the robot at this specific
+ * timestep, then for each obstacle, computes the gradient of the risk with respect to joint values and
+ * adds a symbolic affine expression to exprs of the form:
+ *
+ *    \epsilon_0 + \nabla_\theta \epsilon (\theta - \theta_0)
+ *
+ * where \epsilon_0 is the risk of collision with the obstacle, and \theta_0 is the vector of joint values at
+ * this timestep, \nabla_\theta \epsilon is the gradient of \epsilon w.r.t. the joint values, and \theta is a
+ * symbolic vector of joint values.
+ *
+ * @param x: a vector of doubles containing the current values of the degrees of freedom (i.e. \theta_0)
+ * @param exprs: a vector of symbolic affine expressions into which we will put the linearized risk expressions
+ *
+ * @returns void, but exprs will be cleared and then filled with the linearized risk expressions.
+ */
+void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, vector<AffExpr>& exprs) {
+  vector<RiskQueryResult> risk_query_results;
+  GetRisksCached(x, risk_query_results);
+  DblVec dofvals = getDblVec(x, m_vars);
+
+  exprs.clear();
+  exprs.reserve(risk_query_results.size());
+  m_rad->SetDOFValues(dofvals); // since we'll be calculating jacobians
+
+  // For each risk result, we need to compute the linearized expression for the collision risk
+  // risk(theta) \approx risk_0 + gradient * (theta - theta_0)
+  BOOST_FOREACH(const RiskQueryResult& risk_result, risk_query_results) {
+    AffExpr risk(risk_result.epsilon);
+
+    // Get the indices of the two robot links that the risk estimate collides with
+    Link2Int::const_iterator itRobotOneShot = m_link2ind.find(risk_result.linkRobotOneShot);
+    Link2Int::const_iterator itRobotTwoShot = m_link2ind.find(risk_result.linkRobotTwoShot);
+
+    // If the risk is extremely small, that means that the largest epsilon shadow used to estimate
+    // the risk did not touch the robot. In that case, the risk is constant at zero, since small motions
+    // are assumed not to bring the robot "into risk" from zero-risk.
+    // Because of this, we only add the linear terms if the risk is non-zero (within tolerance).
+    // We can also skip this if both contact links are not valid
+    if (risk_result.epsilon > m_precision && (itRobotOneShot != m_link2ind.end() || itRobotTwoShot != m_link2ind.end())) {
+      
+      // There are three cases:
+      //  1.) neither the one shot nor the two shot search ended in collision with the controlled links
+      //  2.) only the one shot search ended in collision
+      //  3.) both ended in collision
+      // (collision may have occured with an uncontrolled link, like the robot base).
+      //
+      // If (1) occured, then neither risk_result.linkRobotOneShot nor risk_result.linkRobotTwo
+      // are valid.
+      //
+      // If (2) occured, then risk_result.linkRobotOneShot is a valid link but
+      // risk_result.linkRobotTwoShot is not, so we only add the gradient terms from the first shot
+      //
+      // If (3) occured, then both risk_result.linkRobotOneShot and risk_result.linkRobotTwoShot
+      // will be valid links, so we add the gradient terms from both.
+
+      // In either case 2 or case 3, we include the terms from the first shot, so we can calculate
+      // the gradient: d_epsilon_d_theta (epsilon is the risk estimate and theta the joint angles).
+      //
+      // The explanation of this calculation relies on some knowledge of the proximity alert algorithms.
+      // The ProximityAlert risk estimator gives us d_epsilon_d_x for both the one and two shot estimates.
+      // In this context, x is the vector from the center of the epsilon-shadow ellipsoid to the contact point
+      // with the robot, n is a vector into the robot normal to the contact with the shadow, and J is the Jacobian
+      // of the contact point w.r.t. the joint angles. Then, we have
+      //
+      // d_epsilon_d_theta = d_epsilon_d_x * n * n^T * J
+      //
+      // First we need to make sure the contact unit vector is normalized
+      Vector3d n_hat_one_shot = risk_result.contact_normal_into_robot_one_shot.normalized();
+
+      VectorXd one_shot_jacobian = m_rad->PositionJacobian(itRobotOneShot->second, risk_result.ptRobotOneShot);
+      VectorXd d_epsilon_d_theta_one_shot = risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose() * one_shot_jacobian;
+
+      // We need to check if we're in case 3 before calculating the gradient for the second shot
+      VectorXd risk_grad;
+      if (itRobotTwoShot != m_link2ind.end()) {
+        // make sure the contact unit vector is normalized
+        Vector3d n_hat_two_shot = risk_result.contact_normal_into_robot_two_shot.normalized();
+
+        VectorXd two_shot_jacobian = m_rad->PositionJacobian(itRobotTwoShot->second, risk_result.ptRobotTwoShot);
+        VectorXd d_epsilon_d_theta_two_shot = risk_result.d_epsilon_dx_two_shot * n_hat_two_shot * n_hat_two_shot.transpose() * two_shot_jacobian;
+
+        // Because the combined one- and two-shot risk estimate is epsilon = 0.5*(epsilon_1 + epsilon_2),
+        // The combined gradient is the sum of half of each separate gradient
+        risk_grad = 0.5 * d_epsilon_d_theta_one_shot + 0.5 * d_epsilon_d_theta_two_shot;
+      } else {
+        // Otherwise, we're in case 2 and the gradient is just the gradient from the first shot
+        risk_grad = d_epsilon_d_theta_one_shot;
+      }
+
+      // Now we add risk_grad * (theta - theta_0) to the affine expression
+      exprInc(risk, varDot(risk_grad, m_vars));
+      exprInc(risk, -risk_grad.dot(toVectorXd(dofvals)));
+    }
+    
+    // And return the risk expression by pushing the affine expression into the supplied vector.
+    exprs.push_back(risk);
+  }
+  LOG_DEBUG("%ld distance expressions\n", exprs.size());
+}
 
 
 }

@@ -29,6 +29,50 @@ struct Collision {
 };
 TRAJOPT_API std::ostream& operator<<(std::ostream&, const Collision&);
 
+struct RiskQueryResult {
+  const OR::KinBody::Link* linkRobotOneShot;
+  const OR::KinBody::Link* linkRobotTwoShot;
+  const OR::KinBody::Link* linkB;
+  OR::Vector ptRobotOneShot, ptRobotTwoShot;
+
+  double epsilon; // upper bound on risk of collision
+  // info for computing gradient
+  Eigen::RowVector3d d_epsilon_dx_one_shot;
+  Eigen::RowVector3d d_epsilon_dx_two_shot;
+  Vector3d contact_normal_into_robot_one_shot;
+  Vector3d contact_normal_into_robot_two_shot;
+  
+  RiskQueryResult(const KinBody::Link* linkRobotOneShot, const KinBody::Link* linkRobotTwoShot, const KinBody::Link* linkB,
+                  const OR::Vector& ptRobotOneShot, const OR::Vector& ptRobotTwoShot,
+                  double epsilon,
+                  const Eigen::RowVector3d d_epsilon_dx_one_shot,
+                  const Eigen::RowVector3d d_epsilon_dx_two_shot,
+                  const Vector3d contact_normal_into_robot_one_shot,
+                  const Vector3d contact_normal_into_robot_two_shot) :
+    linkRobotOneShot(linkRobotOneShot),
+    linkRobotTwoShot(linkRobotTwoShot),
+    linkB(linkB),
+    ptRobotOneShot(ptRobotOneShot),
+    ptRobotTwoShot(ptRobotTwoShot),
+    epsilon(epsilon),
+    d_epsilon_dx_one_shot(d_epsilon_dx_one_shot),
+    d_epsilon_dx_two_shot(d_epsilon_dx_two_shot),
+    contact_normal_into_robot_one_shot(contact_normal_into_robot_one_shot),
+    contact_normal_into_robot_two_shot(contact_normal_into_robot_two_shot) {}
+
+  RiskQueryResult(double epsilon) :
+    linkRobotOneShot(),
+    linkRobotTwoShot(),
+    linkB(),
+    ptRobotOneShot(),
+    ptRobotTwoShot(),
+    epsilon(epsilon),
+    d_epsilon_dx_one_shot(),
+    d_epsilon_dx_two_shot(),
+    contact_normal_into_robot_one_shot(),
+    contact_normal_into_robot_two_shot() {}
+};
+
 enum CollisionFilterGroups {
   RobotFilter = 1,
   KinBodyFilter = 2,
@@ -45,6 +89,9 @@ public:
   /** check link vs everything else */
   virtual void LinkVsAll(const KinBody::Link& link, vector<Collision>& collisions, short filterMask)=0;
   virtual void LinksVsAll(const vector<KinBody::LinkPtr>& links, vector<Collision>& collisions, short filterMask)=0;
+
+  // Risk aware collision probability estimation
+  virtual void LinksVsAllRiskEstimate(const vector<KinBody::LinkPtr>& links, vector<RiskQueryResult>& risks, short filterMask, std::map<const OR::KinBody::Link*, Matrix3d> link2covariance, double precision)=0;
 
   /** check robot vs everything else. includes attached bodies */
   void BodyVsAll(const KinBody& body, vector<Collision>& collisions, short filterMask=-1) {

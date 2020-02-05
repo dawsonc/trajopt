@@ -288,6 +288,8 @@ struct CollisionChanceConstraintInfo : public TermInfo, public MakesConstraint {
   /// Individual risk tolerances. list of length 1 automatically gets expanded to list of length n_timesteps
   DblVec waypoint_risk_tolerances;
   double precision;
+  double coeff;
+  double grad_scale_factor;
   void fromJson(const Value& v);
   void hatch(TrajOptProb& prob);
   DEFINE_CREATE(CollisionChanceConstraintInfo)

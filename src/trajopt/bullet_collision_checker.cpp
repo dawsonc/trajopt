@@ -589,10 +589,11 @@ void BulletCollisionChecker::LinkVsAllRiskEstimate_NoUpdate(const KinBody::Link&
   if (link.GetGeometries().empty()) return;
   CollisionObjectWrapper* cow = GetCow(&link);
   
-  LOG_DEBUG("Checking link %s", link.GetName().c_str())
-  LOG_DEBUG("Covariance:\n[%.2f, %.2f, %.2f]\n[%.2f, %.2f, %.2f]\n[%.2f, %.2f, %.2f]", covariance(0, 0), covariance(0, 1), covariance(0, 2), covariance(1, 0), covariance(1, 1), covariance(1, 2), covariance(2, 0), covariance(2, 1), covariance(2, 2))
-  LOG_DEBUG("Precision %.8f", precision);
-  LOG_DEBUG("Filter Group %d", filterMask);
+  // LOG_DEBUG("Checking link %s", link.GetName().c_str())
+  // LOG_DEBUG("Covariance:\n[%.2f, %.2f, %.2f]\n[%.2f, %.2f, %.2f]\n[%.2f, %.2f, %.2f]", covariance(0, 0), covariance(0, 1), covariance(0, 2), covariance(1, 0), covariance(1, 1), covariance(1, 2), covariance(2, 0), covariance(2, 1), covariance(2, 2))
+  // LOG_DEBUG("Precision %.8f", precision);
+  // LOG_DEBUG("Filter Group %d", filterMask);
+  
   // Pass that collision object to the proximity alert algorithms
   ProximityAlert::ProbabilityBoundWithGradientInfoCombined result;
   result = ProximityAlert::compute_collision_probability_bound_and_gradient(
@@ -607,17 +608,31 @@ void BulletCollisionChecker::LinkVsAllRiskEstimate_NoUpdate(const KinBody::Link&
   // This involves a lot of "tab A -> slot B" to get all the data transferred.
   // We can also only fill out most of it if epsilon is not zero
   if (result.epsilon > precision) {
-    risks.push_back(RiskQueryResult(
-      getLink(result.one_shot_result.collider),
-      getLink(result.two_shot_result.collider),
-      &link,
-      toOR(result.one_shot_result.contact_point_on_robot),
-      toOR(result.two_shot_result.contact_point_on_robot),
-      result.epsilon,
-      result.one_shot_result.d_epsilon_d_x,
-      result.two_shot_result.d_epsilon_d_x,
-      result.one_shot_result.contact_normal_into_robot,
-      result.two_shot_result.contact_normal_into_robot));
+    // Also, if the first or second shot were "free" (i.e. didn't hit anything),
+    // then a lot of these fields will be null. If the first shot was free then
+    // the overall epsilon will be less than precision, so this clause only has to
+    // handle the case when the second shot is free.
+    if (result.two_shot_result.epsilon > precision) {
+      risks.push_back(RiskQueryResult(
+        getLink(result.one_shot_result.collider),
+        getLink(result.two_shot_result.collider),
+        &link,
+        toOR(result.one_shot_result.contact_point_on_robot),
+        toOR(result.two_shot_result.contact_point_on_robot),
+        result.epsilon,
+        result.one_shot_result.d_epsilon_d_x,
+        result.two_shot_result.d_epsilon_d_x,
+        result.one_shot_result.contact_normal_into_robot,
+        result.two_shot_result.contact_normal_into_robot));
+    } else {
+      risks.push_back(RiskQueryResult(
+        getLink(result.one_shot_result.collider),
+        &link,
+        toOR(result.one_shot_result.contact_point_on_robot),
+        result.epsilon,
+        result.one_shot_result.d_epsilon_d_x,
+        result.one_shot_result.contact_normal_into_robot));
+    }
   } else {
     risks.push_back(RiskQueryResult(result.epsilon));
   }

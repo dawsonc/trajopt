@@ -399,7 +399,7 @@ namespace ProximityAlert
                                                      ((btScalar) -1.0) * contact_normal.getZ();
         one_shot_result.contact_point_on_robot = contact_point_on_robot;
         one_shot_result.collider = collider;
-        LOG_DEBUG("First shot result: %0.4f", epsilon);
+        // LOG_DEBUG("First shot result: %0.4f", epsilon);
 
         // Calculating the gradient is a bit involved. See write-up for derivation
         // Start with the derivative of epsilon w.r.t. r where r = x^T Sigma x (the "radius" of the ellipsoid)
@@ -438,6 +438,9 @@ namespace ProximityAlert
         float epsilon_large = (epsilon_ub + epsilon_lb) / 2.0;
         // the length of the interval halves at each step, so we need order -log2(tolerance) steps to meet the tolerance
         last_epsilon = epsilon_lb;
+
+        // Reset the collider for the second search
+        collider = 0;
 
         // Construct a new confidence interval ellipsoid that is intersected with the half-space
         // facing away from collision
@@ -515,7 +518,7 @@ namespace ProximityAlert
                                                      ((btScalar) -1.0) * contact_normal.getZ();
         two_shot_result.contact_point_on_robot = contact_point_on_robot;
         two_shot_result.collider = collider;
-        LOG_DEBUG("Second shot result: %0.4f", epsilon_large);
+        // LOG_DEBUG("Second shot result: %0.4f", epsilon_large);
 
         // Calculating the gradient is a bit involved. See write-up for derivation
         // Start with the derivative of epsilon w.r.t. r where r = x^T Sigma x (the "radius" of the ellipsoid)
@@ -533,7 +536,7 @@ namespace ProximityAlert
         combined_result.epsilon = 0.5*(epsilon_large + epsilon_small);
         combined_result.one_shot_result = one_shot_result;
         combined_result.two_shot_result = two_shot_result;
-        LOG_DEBUG("Combined result: %0.4f", combined_result.epsilon);
+        // LOG_DEBUG("Combined result: %0.4f", combined_result.epsilon);
 
         // Clean up our memory usage.
         delete cutoff_confidence_interval_ellipsoid;

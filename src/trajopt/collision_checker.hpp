@@ -60,6 +60,22 @@ struct RiskQueryResult {
     contact_normal_into_robot_one_shot(contact_normal_into_robot_one_shot),
     contact_normal_into_robot_two_shot(contact_normal_into_robot_two_shot) {}
 
+  RiskQueryResult(const KinBody::Link* linkRobotOneShot, const KinBody::Link* linkB,
+                  const OR::Vector& ptRobotOneShot,
+                  double epsilon,
+                  const Eigen::RowVector3d d_epsilon_dx_one_shot,
+                  const Vector3d contact_normal_into_robot_one_shot) :
+    linkRobotOneShot(linkRobotOneShot),
+    linkRobotTwoShot(),
+    linkB(linkB),
+    ptRobotOneShot(ptRobotOneShot),
+    ptRobotTwoShot(),
+    epsilon(epsilon),
+    d_epsilon_dx_one_shot(d_epsilon_dx_one_shot),
+    d_epsilon_dx_two_shot(),
+    contact_normal_into_robot_one_shot(contact_normal_into_robot_one_shot),
+    contact_normal_into_robot_two_shot() {}
+
   RiskQueryResult(double epsilon) :
     linkRobotOneShot(),
     linkRobotTwoShot(),

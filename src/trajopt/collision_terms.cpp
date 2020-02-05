@@ -281,12 +281,15 @@ CollisionChanceConstraint::CollisionChanceConstraint(std::vector<std::string> un
                                                      std::vector<Matrix3d> location_covariances,
                                                      double risk_tolerance,
                                                      double required_precision,
+                                                     double coeff,
+                                                     double grad_scale_factor,
                                                      ConfigurationPtr rad,
                                                      const VarVector& vars) :
-    m_calc(new SingleTimestepCollisionRiskEvaluator(uncertain_body_names, location_covariances, required_precision, rad, vars)),
+    m_calc(new SingleTimestepCollisionRiskEvaluator(uncertain_body_names, location_covariances, required_precision, grad_scale_factor, rad, vars)),
     m_uncertain_body_names(uncertain_body_names),
     m_location_covariances(location_covariances),
-    m_risk_tolerance(risk_tolerance)
+    m_risk_tolerance(risk_tolerance),
+    m_coeff(coeff)
 {
   name_="collision";
 }
@@ -316,7 +319,8 @@ ConvexConstraintsPtr CollisionChanceConstraint::convex(const vector<double>& x, 
     exprInc(risk_violation, exprs[i]);
   }
   // Add the accumulated constraint to the model
-  out->addIneqCnt(risk_violation);
+  out->addIneqCnt(exprMult(risk_violation, m_coeff)); // <= 0
+  LOG_DEBUG("VIOLATION convex: %f", out->violation(x));
   return out;
 }
 
@@ -341,12 +345,81 @@ DblVec CollisionChanceConstraint::value(const vector<double>& x) {
   DblVec out(1);
   out[0] = 0;
   for (int i=0; i < risks.size(); ++i) {
-    out[0] += pospart(risks[i] - m_risk_tolerance);
+    out[0] += risks[i];
   }
-  LOG_DEBUG("+++++ RISK VIOLATION %.8f", out[0]);
+  out[0] = pospart(out[0] - m_risk_tolerance) * m_coeff;
   return out;
 }
 
+typedef OpenRAVE::RaveVector<float> RaveVectorf;
+
+void SingleTimestepCollisionRiskEvaluator::PlotRisks(const std::vector<RiskQueryResult>& risk_query_results, OR::EnvironmentBase& env, vector<OR::GraphHandlePtr>& handles) {
+  BOOST_FOREACH(const RiskQueryResult& risk_result, risk_query_results) {
+    RaveVectorf color1 = RaveVectorf(0,0,1,1);
+
+    // OR::Vector endpoint = OR::Vector(
+    //   risk_result.ptRobotTwoShot[0] + risk_result.contact_normal_into_robot_two_shot(0),
+    //   risk_result.ptRobotTwoShot[1] + risk_result.contact_normal_into_robot_two_shot(1),
+    //   risk_result.ptRobotTwoShot[2] + risk_result.contact_normal_into_robot_two_shot(2));
+    // handles.push_back(env.drawarrow(risk_result.ptRobotTwoShot, endpoint, .0025, color));
+
+    RaveVectorf color2 = RaveVectorf(1,0,0,1);
+
+    // OR::Vector endpoint2 = OR::Vector(
+    //   risk_result.ptRobotOneShot[0] + risk_result.contact_normal_into_robot_one_shot(0),
+    //   risk_result.ptRobotOneShot[1] + risk_result.contact_normal_into_robot_one_shot(1),
+    //   risk_result.ptRobotOneShot[2] + risk_result.contact_normal_into_robot_one_shot(2));
+    // handles.push_back(env.drawarrow(risk_result.ptRobotOneShot, endpoint2, .0025, color2));
+
+    // Get the indices of the two robot links that the risk estimate collides with
+    Link2Int::const_iterator itRobotOneShot = m_link2ind.find(risk_result.linkRobotOneShot);
+    Link2Int::const_iterator itRobotTwoShot = m_link2ind.find(risk_result.linkRobotTwoShot);
+
+    if (risk_result.epsilon > m_precision && itRobotOneShot != m_link2ind.end()) {
+      Vector3d n_hat_one_shot = risk_result.contact_normal_into_robot_one_shot.normalized();
+
+      VectorXd one_shot_jacobian = m_rad->PositionJacobian(itRobotOneShot->second, risk_result.ptRobotOneShot);
+      VectorXd d_epsilon_d_theta_one_shot = risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose() * one_shot_jacobian;
+
+      VectorXd scaled_nhat_oneshot = 1000*risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose();
+
+      OR::Vector endpoint1 = OR::Vector(
+        risk_result.ptRobotOneShot[0] + n_hat_one_shot(0),
+        risk_result.ptRobotOneShot[1] + n_hat_one_shot(1),
+        risk_result.ptRobotOneShot[2] + n_hat_one_shot(2));
+
+      handles.push_back(env.drawarrow(risk_result.ptRobotOneShot, endpoint1, .0025, color1));
+
+      // We need to check if we're in case 3 before calculating the gradient for the second shot
+      VectorXd risk_grad;
+      Vector3d n_hat_two_shot;
+      if (itRobotTwoShot != m_link2ind.end()) {
+        // make sure the contact unit vector is normalized
+        Vector3d n_hat_two_shot = risk_result.contact_normal_into_robot_two_shot.normalized();
+
+        VectorXd two_shot_jacobian = m_rad->PositionJacobian(itRobotTwoShot->second, risk_result.ptRobotTwoShot);
+        VectorXd d_epsilon_d_theta_two_shot = risk_result.d_epsilon_dx_two_shot * n_hat_two_shot * n_hat_two_shot.transpose() * two_shot_jacobian;
+
+        // Because the combined one- and two-shot risk estimate is epsilon = 0.5*(epsilon_1 + epsilon_2),
+        // The combined gradient is the sum of half of each separate gradient
+        risk_grad = 0.5 * d_epsilon_d_theta_one_shot + 0.5 * d_epsilon_d_theta_two_shot;
+
+        VectorXd scaled_nhat_twoshot = 1000*risk_result.d_epsilon_dx_two_shot * n_hat_two_shot * n_hat_two_shot.transpose();
+        OR::Vector endpoint2 = OR::Vector(
+          risk_result.ptRobotTwoShot[0] + n_hat_two_shot(0),
+          risk_result.ptRobotTwoShot[1] + n_hat_two_shot(1),
+          risk_result.ptRobotTwoShot[2] + n_hat_two_shot(2));
+        handles.push_back(env.drawarrow(risk_result.ptRobotTwoShot, endpoint2, .0025, color2));
+      }
+    }
+  }
+}
+
+void CollisionChanceConstraint::Plot(const DblVec& x, OR::EnvironmentBase& env, std::vector<OR::GraphHandlePtr>& handles) {
+  vector<RiskQueryResult> risk_query_results;
+  m_calc->GetRisksCached(x, risk_query_results);
+  m_calc->PlotRisks(risk_query_results, env, handles);
+}
 
 /**
  * Constructor for the SingleTimestepCollisionRiskEvaluator class, which is an object used to evaluate
@@ -364,6 +437,7 @@ SingleTimestepCollisionRiskEvaluator::SingleTimestepCollisionRiskEvaluator(
     std::vector<std::string> uncertain_body_names,
     std::vector<Matrix3d> location_covariances,
     double precision,
+    double grad_scale_factor,
     ConfigurationPtr rad,
     const VarVector& vars) :
   m_env(rad->GetEnv()),
@@ -374,7 +448,8 @@ SingleTimestepCollisionRiskEvaluator::SingleTimestepCollisionRiskEvaluator(
   m_link2covariance(),
   m_links(),
   m_filterMask(RobotFilter),
-  m_precision(precision)
+  m_precision(precision),
+  m_grad_scale_factor(grad_scale_factor)
 {
   // Find uncertain links by body name
   vector<int> inds;
@@ -396,8 +471,16 @@ SingleTimestepCollisionRiskEvaluator::SingleTimestepCollisionRiskEvaluator(
 
   // For easy access, save the OpenRAVE index and covariance matrix of each link in a map
   for (int i=0; i < m_links.size(); ++i) {
-    m_link2ind[m_links[i].get()] = inds[i];
     m_link2covariance[m_links[i].get()] = covariances[i];
+  }
+
+  // We also need to save a map from robot link indices to OpenRAVE indices,
+  // so we can get the Jacobian of points on those links later.
+  vector<KinBody::LinkPtr> links;
+  inds.clear();
+  rad->GetAffectedLinks(links, true, inds);
+  for (int i=0; i < links.size(); ++i) {
+    m_link2ind[links[i].get()] = inds[i];
   }
 }
 
@@ -534,7 +617,7 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
       // First we need to make sure the contact unit vector is normalized
       Vector3d n_hat_one_shot = risk_result.contact_normal_into_robot_one_shot.normalized();
 
-      VectorXd one_shot_jacobian = m_rad->PositionJacobian(itRobotOneShot->second, risk_result.ptRobotOneShot);
+      DblMatrix one_shot_jacobian = m_rad->PositionJacobian(itRobotOneShot->second, risk_result.ptRobotOneShot);
       VectorXd d_epsilon_d_theta_one_shot = risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose() * one_shot_jacobian;
 
       // We need to check if we're in case 3 before calculating the gradient for the second shot
@@ -543,7 +626,7 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
         // make sure the contact unit vector is normalized
         Vector3d n_hat_two_shot = risk_result.contact_normal_into_robot_two_shot.normalized();
 
-        VectorXd two_shot_jacobian = m_rad->PositionJacobian(itRobotTwoShot->second, risk_result.ptRobotTwoShot);
+        DblMatrix two_shot_jacobian = m_rad->PositionJacobian(itRobotTwoShot->second, risk_result.ptRobotTwoShot);
         VectorXd d_epsilon_d_theta_two_shot = risk_result.d_epsilon_dx_two_shot * n_hat_two_shot * n_hat_two_shot.transpose() * two_shot_jacobian;
 
         // Because the combined one- and two-shot risk estimate is epsilon = 0.5*(epsilon_1 + epsilon_2),
@@ -553,6 +636,11 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
         // Otherwise, we're in case 2 and the gradient is just the gradient from the first shot
         risk_grad = d_epsilon_d_theta_one_shot;
       }
+      risk_grad *= m_grad_scale_factor;
+      // LOG_DEBUG("Risk Gradient: %ld elements, %ld vars", risk_grad.size(), m_vars.size());
+      // for (int j = 0; j < risk_grad.size(); j++) {
+      //   LOG_DEBUG("\t %.8f", risk_grad(j));
+      // }
 
       // Now we add risk_grad * (theta - theta_0) to the affine expression
       exprInc(risk, varDot(risk_grad, m_vars));
@@ -562,7 +650,7 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
     // And return the risk expression by pushing the affine expression into the supplied vector.
     exprs.push_back(risk);
   }
-  LOG_DEBUG("%ld distance expressions\n", exprs.size());
+  LOG_DEBUG("%ld risk expressions\n", exprs.size());
 }
 
 

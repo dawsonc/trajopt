@@ -117,6 +117,8 @@ struct CollisionRiskEvaluator {
   virtual ~CollisionRiskEvaluator() {}
   virtual VarVector GetVars()=0;
 
+  virtual void PlotRisks(const std::vector<RiskQueryResult>& risk_query_results, OR::EnvironmentBase& env, vector<OR::GraphHandlePtr>& handles) = 0;
+
   Cache<size_t, vector<RiskQueryResult>, 3> m_cache;
 };
 typedef boost::shared_ptr<CollisionRiskEvaluator> CollisionRiskEvaluatorPtr;
@@ -126,7 +128,7 @@ struct SingleTimestepCollisionRiskEvaluator : public CollisionRiskEvaluator {
 public:
   SingleTimestepCollisionRiskEvaluator(std::vector<std::string> uncertain_body_names,
                                        std::vector<Matrix3d> location_covariances,
-                                       double precision,
+                                       double precision, double grad_scale_factor,
                                        ConfigurationPtr rad,
                                        const VarVector& vars);
   /**
@@ -143,6 +145,8 @@ public:
   void PerformRiskCheck(const DblVec& x, vector<RiskQueryResult>& risks);
   VarVector GetVars() {return m_vars;}
 
+  void PlotRisks(const std::vector<RiskQueryResult>& risk_query_results, OR::EnvironmentBase& env, vector<OR::GraphHandlePtr>& handles);
+
   OR::EnvironmentBasePtr m_env;
   CollisionCheckerPtr m_cc;
   ConfigurationPtr m_rad;
@@ -152,16 +156,19 @@ public:
   vector<OR::KinBody::LinkPtr> m_links;
   short m_filterMask;
   double m_precision;
+  double m_grad_scale_factor;
 };
 
 
-class TRAJOPT_API CollisionChanceConstraint : public IneqConstraint {
+class TRAJOPT_API CollisionChanceConstraint : public IneqConstraint, public Plotter {
 public:
   /* constructor for single timestep */
   CollisionChanceConstraint(std::vector<std::string> uncertain_body_names,
                             std::vector<Matrix3d> location_covariances,
                             double risk_tolerance,
                             double required_precision,
+                            double coeff,
+                            double grad_scale_factor,
                             ConfigurationPtr rad,
                             const VarVector& vars);
 
@@ -172,6 +179,8 @@ public:
   VarVector getVars() {return m_calc->GetVars();}
 private:
   CollisionRiskEvaluatorPtr m_calc;
+
+  double m_coeff;
 
   std::vector<std::string> m_uncertain_body_names;
   std::vector<Matrix3d> m_location_covariances;

@@ -250,6 +250,7 @@ TrajOptResultPtr OptimizeProblem(TrajOptProbPtr prob, bool plot) {
   opt.min_approx_improve_frac_ = .001;
   opt.improve_ratio_threshold_ = .2;
   opt.merit_error_coeff_ = 20;
+  opt.max_merit_coeff_increases_ = 10;
   if (plot) {
     SetupPlotting(*prob, opt);
   }
@@ -605,6 +606,12 @@ void CollisionChanceConstraintInfo::fromJson(const Value& v) {
   // Extract precision tolerance
   childFromJson(params, precision, "precision");
 
+  // Extract constraint scaling coefficient
+  childFromJson(params, coeff, "coeff");
+
+  // Extract gradient scaling coefficient
+  childFromJson(params, grad_scale_factor, "grad_scale_factor");
+
   // Extract covariance matrices for uncertain body positions
   // First get the squashed versions (specifying only the 6 symmetric elements)
   std::vector<DblVec> location_covariances_squashed;
@@ -625,7 +632,7 @@ void CollisionChanceConstraintInfo::fromJson(const Value& v) {
     location_covariances.push_back(location_covariance);
   }
   
-  const char* all_fields[] = {"uncertain_body_names", "location_covariances", "waypoint_risk_tolerances", "precision"};
+  const char* all_fields[] = {"uncertain_body_names", "location_covariances", "waypoint_risk_tolerances", "precision", "coeff", "grad_scale_factor"};
   ensure_only_members(params, all_fields, sizeof(all_fields)/sizeof(char*));
 }
 
@@ -640,6 +647,8 @@ void CollisionChanceConstraintInfo::hatch(TrajOptProb& prob) {
         location_covariances,
         waypoint_risk_tolerances[i],
         precision,
+        coeff,
+        grad_scale_factor,
         prob.GetRAD(),
         prob.GetVarRow(i))
     ));

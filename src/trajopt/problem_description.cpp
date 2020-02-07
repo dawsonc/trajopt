@@ -250,7 +250,7 @@ TrajOptResultPtr OptimizeProblem(TrajOptProbPtr prob, bool plot) {
   opt.min_approx_improve_frac_ = .001;
   opt.improve_ratio_threshold_ = .2;
   opt.merit_error_coeff_ = 20;
-  opt.max_merit_coeff_increases_ = 10;
+  opt.max_merit_coeff_increases_ = 5;
   if (plot) {
     SetupPlotting(*prob, opt);
   }
@@ -588,16 +588,10 @@ void CollisionChanceConstraintInfo::fromJson(const Value& v) {
   FAIL_IF_FALSE(v.isMember("params"));
   const Value& params = v["params"];
 
-  // Extract waypoint risk tolerances
-  int n_steps = gPCI->basic_info.n_steps;
-  childFromJson(params, waypoint_risk_tolerances, "waypoint_risk_tolerances");
-  if (waypoint_risk_tolerances.size() == 1) {
-    waypoint_risk_tolerances = DblVec(n_steps, waypoint_risk_tolerances[0]);
-  }
-  else if (waypoint_risk_tolerances.size() != n_steps) {
-    PRINT_AND_THROW (boost::format(
-      "wrong size: waypoint_risk_tolerances. expected %i got %i")%n_steps%waypoint_risk_tolerances.size());
-  }
+  // Extract overall risk tolerance
+  num_timesteps = gPCI->basic_info.n_steps;
+  LOG_DEBUG("num_timesteps = %d", num_timesteps);
+  childFromJson(params, overall_risk_tolerance, "overall_risk_tolerance");
 
   // Extract obstacles
   childFromJson(params, uncertain_body_names,"uncertain_body_names");
@@ -632,29 +626,28 @@ void CollisionChanceConstraintInfo::fromJson(const Value& v) {
     location_covariances.push_back(location_covariance);
   }
   
-  const char* all_fields[] = {"uncertain_body_names", "location_covariances", "waypoint_risk_tolerances", "precision", "coeff", "grad_scale_factor"};
+  const char* all_fields[] = {"uncertain_body_names", "location_covariances", "overall_risk_tolerance", "precision", "coeff", "grad_scale_factor"};
   ensure_only_members(params, all_fields, sizeof(all_fields)/sizeof(char*));
 }
 
 void CollisionChanceConstraintInfo::hatch(TrajOptProb& prob) {
   LOG_DEBUG("Hatching...");
-  int n_steps = waypoint_risk_tolerances.size();
-  LOG_DEBUG("Adding %d chance constraints...", n_steps);
-  for (int i=0; i < n_steps; ++i) {
-    prob.addIneqConstraint(ConstraintPtr(
-      new CollisionChanceConstraint(
-        uncertain_body_names,
-        location_covariances,
-        waypoint_risk_tolerances[i],
-        precision,
-        coeff,
-        grad_scale_factor,
-        prob.GetRAD(),
-        prob.GetVarRow(i))
-    ));
-    prob.getIneqConstraints().back()->setName( (boost::format("%s_%i")%name%i).str() );
-  }
-  LOG_DEBUG("Done adding chance constraints.")
+  LOG_DEBUG("Adding chance constraint...");
+  LOG_DEBUG("num_timesteps = %d", num_timesteps);
+  prob.addIneqConstraint(ConstraintPtr(
+    new CollisionChanceConstraint(
+      uncertain_body_names,
+      location_covariances,
+      overall_risk_tolerance,
+      precision,
+      coeff,
+      grad_scale_factor,
+      num_timesteps,
+      prob.GetRAD(),
+      prob.GetVars())
+  ));
+  prob.getIneqConstraints().back()->setName( (boost::format("%s")%name).str() );
+  LOG_DEBUG("Done adding chance constraint.")
 }
 
 

@@ -185,6 +185,7 @@ void PlotCollisions(const std::vector<Collision>& collisions, OR::EnvironmentBas
     if (col.distance < 0) color = RaveVectorf(1,0,0,1);
     else if (col.distance < safe_dist) color = RaveVectorf(1,1,0,1);
     else color = RaveVectorf(0,1,0,1);
+
     if (col.cctype == CCType_Between) {
       handles.push_back(env.drawarrow(col.ptB, col.ptB1, .002, RaveVectorf(0,0,0,1)));
     }
@@ -275,7 +276,7 @@ DblVec CollisionConstraint::value(const vector<double>& x) {
  * @param precision: a double representing the desired precision tolerance in our risk estimates. True risk is guaranteed
  *                   not to exceed the estimate by more than precision/2.
  * @param rad: a pointer to the configuration of the robot and evironment.
- * @param vars: a vector of variables to be used in constructing symbolic expressions for linearized risk.
+ * @param vars: an array of variables to be used in constructing symbolic expressions for linearized risk.
  */
 CollisionChanceConstraint::CollisionChanceConstraint(std::vector<std::string> uncertain_body_names,
                                                      std::vector<Matrix3d> location_covariances,
@@ -283,13 +284,22 @@ CollisionChanceConstraint::CollisionChanceConstraint(std::vector<std::string> un
                                                      double required_precision,
                                                      double coeff,
                                                      double grad_scale_factor,
+                                                     int numsteps,
                                                      ConfigurationPtr rad,
-                                                     const VarVector& vars) :
-    m_calc(new SingleTimestepCollisionRiskEvaluator(uncertain_body_names, location_covariances, required_precision, grad_scale_factor, rad, vars)),
+                                                     const VarArray& vars) :
+    m_calc(new OverallCollisionRiskEvaluator(uncertain_body_names,
+                                             location_covariances,
+                                             required_precision,
+                                             grad_scale_factor,
+                                             numsteps,
+                                             rad,
+                                             vars)),
+    m_vars(vars),
     m_uncertain_body_names(uncertain_body_names),
     m_location_covariances(location_covariances),
     m_risk_tolerance(risk_tolerance),
-    m_coeff(coeff)
+    m_coeff(coeff),
+    m_numsteps(m_numsteps)
 {
   name_="collision";
 }
@@ -321,6 +331,7 @@ ConvexConstraintsPtr CollisionChanceConstraint::convex(const vector<double>& x, 
   // Add the accumulated constraint to the model
   out->addIneqCnt(exprMult(risk_violation, m_coeff)); // <= 0
   LOG_DEBUG("VIOLATION convex: %f", out->violation(x));
+  LOG_DEBUG("Total risk: %f", out->violation(x) + m_risk_tolerance);
   return out;
 }
 
@@ -381,12 +392,12 @@ void SingleTimestepCollisionRiskEvaluator::PlotRisks(const std::vector<RiskQuery
       VectorXd one_shot_jacobian = m_rad->PositionJacobian(itRobotOneShot->second, risk_result.ptRobotOneShot);
       VectorXd d_epsilon_d_theta_one_shot = risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose() * one_shot_jacobian;
 
-      VectorXd scaled_nhat_oneshot = 1000*risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose();
+      VectorXd scaled_nhat_oneshot = risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose();
 
       OR::Vector endpoint1 = OR::Vector(
-        risk_result.ptRobotOneShot[0] + n_hat_one_shot(0),
-        risk_result.ptRobotOneShot[1] + n_hat_one_shot(1),
-        risk_result.ptRobotOneShot[2] + n_hat_one_shot(2));
+        risk_result.ptRobotOneShot[0] - scaled_nhat_oneshot(0),
+        risk_result.ptRobotOneShot[1] - scaled_nhat_oneshot(1),
+        risk_result.ptRobotOneShot[2] - scaled_nhat_oneshot(2));
 
       handles.push_back(env.drawarrow(risk_result.ptRobotOneShot, endpoint1, .0025, color1));
 
@@ -404,11 +415,11 @@ void SingleTimestepCollisionRiskEvaluator::PlotRisks(const std::vector<RiskQuery
         // The combined gradient is the sum of half of each separate gradient
         risk_grad = 0.5 * d_epsilon_d_theta_one_shot + 0.5 * d_epsilon_d_theta_two_shot;
 
-        VectorXd scaled_nhat_twoshot = 1000*risk_result.d_epsilon_dx_two_shot * n_hat_two_shot * n_hat_two_shot.transpose();
+        VectorXd scaled_nhat_twoshot = risk_result.d_epsilon_dx_two_shot * n_hat_two_shot * n_hat_two_shot.transpose();
         OR::Vector endpoint2 = OR::Vector(
-          risk_result.ptRobotTwoShot[0] + n_hat_two_shot(0),
-          risk_result.ptRobotTwoShot[1] + n_hat_two_shot(1),
-          risk_result.ptRobotTwoShot[2] + n_hat_two_shot(2));
+          risk_result.ptRobotTwoShot[0] - scaled_nhat_twoshot(0),
+          risk_result.ptRobotTwoShot[1] - scaled_nhat_twoshot(1),
+          risk_result.ptRobotTwoShot[2] - scaled_nhat_twoshot(2));
         handles.push_back(env.drawarrow(risk_result.ptRobotTwoShot, endpoint2, .0025, color2));
       }
     }
@@ -416,9 +427,7 @@ void SingleTimestepCollisionRiskEvaluator::PlotRisks(const std::vector<RiskQuery
 }
 
 void CollisionChanceConstraint::Plot(const DblVec& x, OR::EnvironmentBase& env, std::vector<OR::GraphHandlePtr>& handles) {
-  vector<RiskQueryResult> risk_query_results;
-  m_calc->GetRisksCached(x, risk_query_results);
-  m_calc->PlotRisks(risk_query_results, env, handles);
+  m_calc->PlotRisks(x, env, handles);
 }
 
 /**
@@ -493,7 +502,7 @@ SingleTimestepCollisionRiskEvaluator::SingleTimestepCollisionRiskEvaluator(
  * @param risks: a vector of RiskQueryResult structs into which we will put the results of the risk query.
  *               These structs contain both the risk estimate itself and information for computing the gradient.
  *
- * @returns void, but risks will be cleared and then filled with the risk query results.
+ * @returns void, but risks will filled with the risk query results.
  */
 void CollisionRiskEvaluator::GetRisksCached(const DblVec& x, vector<RiskQueryResult>& risks) {
   double key = hash(getDblVec(x, GetVars()));
@@ -517,7 +526,7 @@ void CollisionRiskEvaluator::GetRisksCached(const DblVec& x, vector<RiskQueryRes
  * @param risks: a vector of RiskQueryResult structs into which we will put the results of the risk query.
  *               These structs contain both the risk estimate itself and information for computing the gradient.
  *
- * @returns void, but risks will be cleared and then filled with the risk query results.
+ * @returns void, but risks will filled with the risk query results.
  */
 void SingleTimestepCollisionRiskEvaluator::PerformRiskCheck(const DblVec& x, vector<RiskQueryResult>& risks) {
   DblVec dofvals = getDblVec(x, m_vars);
@@ -586,7 +595,7 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
     // are assumed not to bring the robot "into risk" from zero-risk.
     // Because of this, we only add the linear terms if the risk is non-zero (within tolerance).
     // We can also skip this if both contact links are not valid
-    if (risk_result.epsilon > m_precision && (itRobotOneShot != m_link2ind.end() || itRobotTwoShot != m_link2ind.end())) {
+    if (risk_result.epsilon > m_precision && itRobotOneShot != m_link2ind.end()) {
       
       // There are three cases:
       //  1.) neither the one shot nor the two shot search ended in collision with the controlled links
@@ -637,10 +646,10 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
         risk_grad = d_epsilon_d_theta_one_shot;
       }
       risk_grad *= m_grad_scale_factor;
-      // LOG_DEBUG("Risk Gradient: %ld elements, %ld vars", risk_grad.size(), m_vars.size());
-      // for (int j = 0; j < risk_grad.size(); j++) {
-      //   LOG_DEBUG("\t %.8f", risk_grad(j));
-      // }
+      LOG_DEBUG("Risk Gradient: %ld elements, %ld vars", risk_grad.size(), m_vars.size());
+      for (int j = 0; j < risk_grad.size(); j++) {
+        LOG_DEBUG("\t %.8f", risk_grad(j));
+      }
 
       // Now we add risk_grad * (theta - theta_0) to the affine expression
       exprInc(risk, varDot(risk_grad, m_vars));
@@ -653,5 +662,93 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
   LOG_DEBUG("%ld risk expressions\n", exprs.size());
 }
 
+
+OverallCollisionRiskEvaluator::OverallCollisionRiskEvaluator(
+    std::vector<std::string> uncertain_body_names,
+    std::vector<Matrix3d> location_covariances,
+    double precision,
+    double grad_scale_factor,
+    int numsteps,
+    ConfigurationPtr rad,
+    const VarArray& vars) :
+  m_timestep_risk_evals(),
+  m_env(rad->GetEnv()),
+  m_cc(CollisionChecker::GetOrCreate(*m_env)),
+  m_rad(rad),
+  m_vars(vars),
+  m_numsteps(numsteps)
+{
+  // Create a single timestep risk evaluator for every timestep
+  for (int i = 0; i < numsteps; ++i) {
+    m_timestep_risk_evals.push_back(SingleTimestepCollisionRiskEvaluator(
+      uncertain_body_names,
+      location_covariances,
+      precision,
+      grad_scale_factor,
+      rad,
+      vars.row(i)));
+  }
+}
+
+/**
+ * Accumulate the risk at each timestep into a single measure of collision risk
+ *
+ * @param x: a vector of doubles containing the current values of the degrees of freedom (i.e. \theta_0)
+ * @param risks: a vector of doubles into which we will put the risk estimates.
+ *
+ * @returns void, but risks will be cleared and then filled with the risk estimates from each timestep.
+ */
+void OverallCollisionRiskEvaluator::CalcRisks(const DblVec& x, DblVec& risks) {
+  risks.clear();
+
+  // Create a new vector to store the results of each timestep's risk
+  // Has to be different since CalcRisks clears the given vector
+  DblVec single_step_risks;
+  BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
+    // Get risks for this timestep
+    evaluator.CalcRisks(x, single_step_risks);
+
+    // Save them by appending to risks
+    risks.insert(risks.begin(), single_step_risks.begin(), single_step_risks.end());
+  }
+  // After this step, risks will be filled with the results of all risk queries
+  // for all timesteps for each uncertain link.
+}
+
+/**
+ * Accumulate the risk expressions at each timestep into a single measure of collision risk
+ *
+ * @param x: a vector of doubles containing the current values of the degrees of freedom (i.e. \theta_0)
+ * @param exprs: a vector of symbolic affine expressions into which we will put the linearized risk expressions
+ *
+ * @returns void, but exprs will be cleared and then filled with the risk estimate expressions from each timestep.
+ */
+void OverallCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, vector<AffExpr>& exprs) {
+  exprs.clear();
+
+  // Create a new vector to store the results of each timestep's risk expressions
+  // Has to be different since CalcRiskExpressions clears the given vector
+  vector<AffExpr> single_step_exprs;
+  BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
+    // Get risk expressions for this timestep
+    evaluator.CalcRiskExpressions(x, single_step_exprs);
+
+    // Save them by appending to exprs
+    exprs.insert(exprs.begin(), single_step_exprs.begin(), single_step_exprs.end());
+  }
+  // After this step, exprs will be filled with the results of all risk queries
+  // for all timesteps for each uncertain link.
+}
+
+/**
+ * Plot the risks at each timestep.
+ */
+void OverallCollisionRiskEvaluator::PlotRisks(const DblVec& x, OR::EnvironmentBase& env, vector<OR::GraphHandlePtr>& handles) {
+  BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
+    vector<RiskQueryResult> risk_query_results;
+    evaluator.GetRisksCached(x, risk_query_results);
+    evaluator.PlotRisks(risk_query_results, env, handles);
+  }
+}
 
 }

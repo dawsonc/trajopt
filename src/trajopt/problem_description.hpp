@@ -286,10 +286,11 @@ struct CollisionChanceConstraintInfo : public TermInfo, public MakesConstraint {
   /// The covariance matrices associated with the uncertain KinBodies. Must have same length as uncertain_body_names
   std::vector<Matrix3d> location_covariances;
   /// Individual risk tolerances. list of length 1 automatically gets expanded to list of length n_timesteps
-  DblVec waypoint_risk_tolerances;
+  double overall_risk_tolerance;
   double precision;
   double coeff;
   double grad_scale_factor;
+  int num_timesteps;
   void fromJson(const Value& v);
   void hatch(TrajOptProb& prob);
   DEFINE_CREATE(CollisionChanceConstraintInfo)

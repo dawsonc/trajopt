@@ -93,7 +93,7 @@ struct BasicArray {
     return out;
   }
 
-  std::vector<T> row(int row) {
+  std::vector<T> row(int row) const {
     std::vector<T> out;
     out.reserve(m_nCol);
     for (int col = 0; col < m_nCol; col++)

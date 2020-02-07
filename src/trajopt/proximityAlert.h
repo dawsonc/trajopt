@@ -394,22 +394,24 @@ namespace ProximityAlert
         // Make a struct to store the result and gradient info from this first search
         ProbabilityBoundWithGradientInfo one_shot_result;
         one_shot_result.epsilon = epsilon;
-        one_shot_result.contact_normal_into_robot << ((btScalar) -1.0) * contact_normal.getX(),
-                                                     ((btScalar) -1.0) * contact_normal.getY(),
-                                                     ((btScalar) -1.0) * contact_normal.getZ();
+        // contact_normal points into the robot, so we just save it.
+        one_shot_result.contact_normal_into_robot << ((btScalar) 1.0) * contact_normal.getX(),
+                                                     ((btScalar) 1.0) * contact_normal.getY(),
+                                                     ((btScalar) 1.0) * contact_normal.getZ();
         one_shot_result.contact_point_on_robot = contact_point_on_robot;
         one_shot_result.collider = collider;
         // LOG_DEBUG("First shot result: %0.4f", epsilon);
 
         // Calculating the gradient is a bit involved. See write-up for derivation
-        // Start with the derivative of epsilon w.r.t. r where r = x^T Sigma x (the "radius" of the ellipsoid)
+        // Start with the derivative of epsilon w.r.t. r where r = x^T Sigma^-1 x (the "radius" of the ellipsoid)
         float d_epsilon_d_r = (-1.0)*boost::math::pdf(chi_squared_dist_3dof, quantile);
         // Get contact point in confidence interval ellipsoid frame
-        btVector3 x = confidence_interval_ellipsoid->localGetSupportingVertex(((btScalar) -1.0) * contact_normal);
+        btVector3 x = confidence_interval_ellipsoid->localGetSupportingVertex(-1.0 * shadow_transform.invXform(contact_normal));
         Eigen::Vector3d x_eigen;
         x_eigen << x.getX(), x.getY(), x.getZ();
+
         // Now derivative of epsilon w.r.t. x
-        one_shot_result.d_epsilon_d_x = d_epsilon_d_r * 2.0 * x_eigen.transpose() * sigma;
+        one_shot_result.d_epsilon_d_x = d_epsilon_d_r * 2.0 * x_eigen.transpose() * sigma_inv;
 
         // At this point, epsilon contains an upper bound on the collision probability. However, it is
         // very conservative, since it sees any event where the uncertain object protrudes beyond the
@@ -445,10 +447,10 @@ namespace ProximityAlert
         // Construct a new confidence interval ellipsoid that is intersected with the half-space
         // facing away from collision
         delete confidence_interval_ellipsoid;
-        contact_normal *= btScalar(-1.0);
+        // We want the contact normal pointing into the epsilon shadow now, so we flip it
         CutoffSphere * cutoff_confidence_interval_ellipsoid = new CutoffSphere(&sphere_origin_bt,
                                                                                &sphere_radius_bt,
-                                                                               contact_normal);
+                                                                               ((btScalar) -1.0) * contact_normal);
 
         while (epsilon_ub - epsilon_lb > epsilon_tolerance) {
             iter_count++;
@@ -513,21 +515,21 @@ namespace ProximityAlert
         // Make a struct to store the result and gradient info from the second search
         ProbabilityBoundWithGradientInfo two_shot_result;
         two_shot_result.epsilon = epsilon_large;
-        two_shot_result.contact_normal_into_robot << ((btScalar) -1.0) * contact_normal.getX(),
-                                                     ((btScalar) -1.0) * contact_normal.getY(),
-                                                     ((btScalar) -1.0) * contact_normal.getZ();
+        two_shot_result.contact_normal_into_robot << ((btScalar) 1.0) * contact_normal.getX(),
+                                                     ((btScalar) 1.0) * contact_normal.getY(),
+                                                     ((btScalar) 1.0) * contact_normal.getZ();
         two_shot_result.contact_point_on_robot = contact_point_on_robot;
         two_shot_result.collider = collider;
         // LOG_DEBUG("Second shot result: %0.4f", epsilon_large);
 
         // Calculating the gradient is a bit involved. See write-up for derivation
-        // Start with the derivative of epsilon w.r.t. r where r = x^T Sigma x (the "radius" of the ellipsoid)
+        // Start with the derivative of epsilon w.r.t. r where r = x^T Sigma^-1 x (the "radius" of the ellipsoid)
         d_epsilon_d_r = (-1.0)*boost::math::pdf(chi_squared_dist_3dof, quantile);
         // Get contact point in confidence interval ellipsoid frame
-        x = cutoff_confidence_interval_ellipsoid->localGetSupportingVertex(((btScalar) -1.0) * contact_normal);
+        x = cutoff_confidence_interval_ellipsoid->localGetSupportingVertex(-1.0 * shadow_transform.invXform(contact_normal));
         x_eigen << x.getX(), x.getY(), x.getZ();
         // Now derivative of epsilon w.r.t. x
-        two_shot_result.d_epsilon_d_x = d_epsilon_d_r * 2.0 * x_eigen.transpose() * sigma;
+        two_shot_result.d_epsilon_d_x = d_epsilon_d_r * 2.0 * x_eigen.transpose() * sigma_inv;
 
         // Now we can compute the estimated upper bound on collision probability
         // This upper bound will be the average of the large and small epsilons found above,

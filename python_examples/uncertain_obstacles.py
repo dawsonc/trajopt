@@ -29,7 +29,7 @@ joint_target = [0.062, 1.287, 0.1, -1.43, -3.011, -0.268, 2.988]
 
 request = {
     "basic_info": {
-        "n_steps": 30,
+        "n_steps": 10,
         "manip": "rightarm",
         # DOF values at first timestep are fixed based on current robot state
         "start_fixed": True
@@ -117,12 +117,12 @@ t_elapsed_first = time.time() - t_start
 # save collision free seed
 initial_traj = result.GetTraj()
 
-trajoptpy.SetInteractive(False)
+trajoptpy.SetInteractive(True)
 robot = env.GetRobots()[0]
 
 request = {
     "basic_info": {
-        "n_steps": 30,
+        "n_steps": 10,
         "manip": "rightarm",
         # DOF values at first timestep are fixed based on current robot state
         "start_fixed": True

@@ -36,9 +36,11 @@ namespace ProximityAlert
                                1)
         {
             m_normal = planeNormal;
-            // make sure to normalize!
-            btScalar recip_length = btScalar(1.0) / planeNormal.length();
-            m_normal *= recip_length;
+            // make sure to normalize! (only if the vector is not zero)
+            if (planeNormal.length() > 0.000001) {
+                btScalar recip_length = btScalar(1.0) / planeNormal.length();
+                m_normal *= recip_length;
+            }
         }
 
         // Return the supporting vertex in the direction specified by
@@ -66,6 +68,7 @@ namespace ProximityAlert
                 // get the in-plane component
                 btVector3 vec0_normal = m_normal * vec0_normal_scale;
                 btVector3 vec0_planar = vec0 - vec0_normal;
+                vec0_planar = vec0_planar.normalize();
                 return btMultiSphereShape::localGetSupportingVertexWithoutMargin(vec0_planar);
             }
         }

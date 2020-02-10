@@ -310,7 +310,7 @@ namespace ProximityAlert
         // This variable will store the contact normal between obj_A and the closest object in the scene once
         // we're done with the line search. See the block comment after the line search while loop for an
         // explanation of why we need this
-        btVector3 contact_normal;
+        btVector3 contact_normal(0.0, 0.0, 0.0);
 
         // To allow us to calculate gradient information later, we need to store the point on the robot
         // at which collision with the maximal epsilon shadow occurs
@@ -390,6 +390,10 @@ namespace ProximityAlert
             delete collision_callback;
             delete epsilon_shadow;
         }
+        // normalize contact normal (if it's not zero, it should be a unit vector)
+        if (contact_normal.length() > 0.00001) {
+            contact_normal = contact_normal.normalized();
+        }
 
         // Make a struct to store the result and gradient info from this first search
         ProbabilityBoundWithGradientInfo one_shot_result;
@@ -400,13 +404,14 @@ namespace ProximityAlert
                                                      ((btScalar) 1.0) * contact_normal.getZ();
         one_shot_result.contact_point_on_robot = contact_point_on_robot;
         one_shot_result.collider = collider;
-        // LOG_DEBUG("First shot result: %0.4f", epsilon);
+        LOG_DEBUG("First shot result: %0.4f", epsilon);
 
         // Calculating the gradient is a bit involved. See write-up for derivation
         // Start with the derivative of epsilon w.r.t. r where r = x^T Sigma^-1 x (the "radius" of the ellipsoid)
         float d_epsilon_d_r = (-1.0)*boost::math::pdf(chi_squared_dist_3dof, quantile);
         // Get contact point in confidence interval ellipsoid frame
         btVector3 x = confidence_interval_ellipsoid->localGetSupportingVertex(-1.0 * shadow_transform.invXform(contact_normal));
+        x = shadow_transform * x;
         Eigen::Vector3d x_eigen;
         x_eigen << x.getX(), x.getY(), x.getZ();
 
@@ -441,8 +446,9 @@ namespace ProximityAlert
         // the length of the interval halves at each step, so we need order -log2(tolerance) steps to meet the tolerance
         last_epsilon = epsilon_lb;
 
-        // Reset the collider for the second search
+        // Reset the collider and contact normal for the second search
         collider = 0;
+        btVector3 two_shot_contact_normal(0.0, 0.0, 0.0);
 
         // Construct a new confidence interval ellipsoid that is intersected with the half-space
         // facing away from collision
@@ -451,6 +457,7 @@ namespace ProximityAlert
         CutoffSphere * cutoff_confidence_interval_ellipsoid = new CutoffSphere(&sphere_origin_bt,
                                                                                &sphere_radius_bt,
                                                                                ((btScalar) -1.0) * contact_normal);
+
 
         while (epsilon_ub - epsilon_lb > epsilon_tolerance) {
             iter_count++;
@@ -497,7 +504,7 @@ namespace ProximityAlert
                 epsilon_lb = epsilon_large;
 
                 // if there was a collision, we save the contact normal and the object we collided with
-                contact_normal = collision_callback->m_contact_normal;
+                two_shot_contact_normal = collision_callback->m_contact_normal;
                 contact_point_on_robot = collision_callback->m_contact_pt_on_robot;
                 collider = collision_callback->m_collider;
             } else {
@@ -511,22 +518,27 @@ namespace ProximityAlert
             delete collision_callback;
             delete epsilon_shadow;
         }
+        // normalize contact normal if not zero (it's a unit vector otherwise)
+        if (two_shot_contact_normal.length() >= 0.0001) {
+            two_shot_contact_normal = two_shot_contact_normal.normalized();
+        }
 
         // Make a struct to store the result and gradient info from the second search
         ProbabilityBoundWithGradientInfo two_shot_result;
         two_shot_result.epsilon = epsilon_large;
-        two_shot_result.contact_normal_into_robot << ((btScalar) 1.0) * contact_normal.getX(),
-                                                     ((btScalar) 1.0) * contact_normal.getY(),
-                                                     ((btScalar) 1.0) * contact_normal.getZ();
+        two_shot_result.contact_normal_into_robot << ((btScalar) 1.0) * two_shot_contact_normal.getX(),
+                                                     ((btScalar) 1.0) * two_shot_contact_normal.getY(),
+                                                     ((btScalar) 1.0) * two_shot_contact_normal.getZ();
         two_shot_result.contact_point_on_robot = contact_point_on_robot;
         two_shot_result.collider = collider;
-        // LOG_DEBUG("Second shot result: %0.4f", epsilon_large);
+        LOG_DEBUG("Second shot result: %0.4f", epsilon_large);
 
         // Calculating the gradient is a bit involved. See write-up for derivation
         // Start with the derivative of epsilon w.r.t. r where r = x^T Sigma^-1 x (the "radius" of the ellipsoid)
         d_epsilon_d_r = (-1.0)*boost::math::pdf(chi_squared_dist_3dof, quantile);
         // Get contact point in confidence interval ellipsoid frame
-        x = cutoff_confidence_interval_ellipsoid->localGetSupportingVertex(-1.0 * shadow_transform.invXform(contact_normal));
+        x = cutoff_confidence_interval_ellipsoid->localGetSupportingVertex(-1.0 * shadow_transform.invXform(two_shot_contact_normal));
+        x = shadow_transform * x;
         x_eigen << x.getX(), x.getY(), x.getZ();
         // Now derivative of epsilon w.r.t. x
         two_shot_result.d_epsilon_d_x = d_epsilon_d_r * 2.0 * x_eigen.transpose() * sigma_inv;
@@ -538,7 +550,7 @@ namespace ProximityAlert
         combined_result.epsilon = 0.5*(epsilon_large + epsilon_small);
         combined_result.one_shot_result = one_shot_result;
         combined_result.two_shot_result = two_shot_result;
-        // LOG_DEBUG("Combined result: %0.4f", combined_result.epsilon);
+        LOG_DEBUG("Combined result: %0.4f", combined_result.epsilon);
 
         // Clean up our memory usage.
         delete cutoff_confidence_interval_ellipsoid;

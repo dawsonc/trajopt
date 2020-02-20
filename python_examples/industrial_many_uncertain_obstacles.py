@@ -16,7 +16,7 @@ env = openravepy.Environment()
 env.StopSimulation()
 # env.Load("robots/kuka-youbot.zae")  # arm on mobile platform
 env.Load("robots/mitsubishi-pa10.zae")  # standard arm
-env.Load("../data/obstacle-course.xml")
+env.Load("../data/industrial_obstacle_course.xml")
 
 # pause every iteration, until you press 'p'.
 # Press escape to disable further plotting
@@ -28,11 +28,11 @@ print robot.GetManipulators()
 
 arm_name = robot.GetManipulators()[0].GetName()
 arm_indices = robot.GetManipulator(arm_name).GetArmIndices()
-joint_start = [0] * len(arm_indices)
+joint_start = [-0.8, 0.9, 0, 1.45, 0, 0.8, 0]
 robot.SetDOFValues(joint_start,
                    arm_indices)
 
-joint_target = [0, 1.5, 0, 0, 0, 0, 0]
+joint_target = [0.8, 0.8, 0, 1.8, 0, 0.6, 0]
 
 n_steps = 10
 
@@ -112,22 +112,21 @@ request = {
             # a list of length one is automatically expanded
             # to a list of length n_dofs
             "params": {"coeffs": [100]}
+        },
+        {
+            "type": "collision",
+            # shorten name so printed table will be prettier
+            "name": "disc_coll",
+            "params": {
+                "continuous": False,
+                # penalty coefficients. list of length one is automatically
+                # expanded to a list of length n_timesteps
+                "coeffs": [20],
+                # robot-obstacle distance that penalty kicks in.
+                # expands to length n_timesteps
+                "dist_pen": [0.01]
+            }
         }
-        # ,
-        # {
-        #     "type": "collision",
-        #     # shorten name so printed table will be prettier
-        #     "name": "disc_coll",
-        #     "params": {
-        #         "continuous": False,
-        #         # penalty coefficients. list of length one is automatically
-        #         # expanded to a list of length n_timesteps
-        #         "coeffs": [20],
-        #         # robot-obstacle distance that penalty kicks in.
-        #         # expands to length n_timesteps
-        #         "dist_pen": [0.01]
-        #     }
-        # }
     ],
     "constraints": [
         # BEGIN joint_constraint
@@ -143,9 +142,7 @@ request = {
             "name": "chance_constr",
             "params": {
                 # The list of uncertain KinBodies
-                "uncertain_body_names": ['obs0',
-                                         'obs1',
-                                         'obs2'],
+                "uncertain_body_names": ['obs0', 'operator'],
                 # As a reminder: covariances must be positive semidefinite
                 # This implies that it must be symmetric, so we only specify
                 # the six unique values (numbered below):
@@ -156,9 +153,8 @@ request = {
                 #
                 # This list must be the same length as obstacles above
                 "location_covariances": [
-                    [0.0001, 0.0, 0.0, 0.01, 0.0, 0.0001],
-                    [0.0001, 0.0, 0.0, 0.01, 0.0, 0.0001],
-                    [0.0001, 0.0, 0.0, 0.01, 0.0, 0.0001]
+                    [0.0001, 0.0, 0.0, 0.0001, 0.0, 0.01],
+                    [0.01, 0.0, 0.0, 0.1, 0.0, 0.0001]
                 ],
                 # The acceptable max. risk at each waypoint. Lists of length 1
                 # are expanded to n_timesteps
@@ -174,12 +170,12 @@ request = {
     ],
     # BEGIN init
     "init_info": {
-        # straight line in joint space.
-        "type": "straight_line",
-        "endpoint": joint_target
-        # # start from previous
-        # "type": "given_traj",
-        # "data": result.GetTraj().tolist()
+        # # straight line in joint space.
+        # "type": "straight_line",
+        # "endpoint": joint_target
+        # start from previous
+        "type": "given_traj",
+        "data": result.GetTraj().tolist()
     }
     # END init
 }
@@ -213,18 +209,15 @@ cc_traj = result.GetTraj()
 
 # we do this by conducting a bunch of trials, and on each trial we
 # perturb the position of the table and check if the trajectory is safe
-N = 1000
+N = 100
 
-sigmas = [np.diag([0.0001, 0.01, 0.0001]),
-          np.diag([0.0001, 0.01, 0.0001]),
-          np.diag([0.0001, 0.01, 0.0001])]
+sigmas = [np.diag([0.0001, 0.0001, 0.01]),
+          np.diag([0.01, 0.05, 0.0001])]
 
 obs0_kinbody = env.GetKinBody('obs0')
 obs0_xform_nominal = env.GetKinBody('obs0').GetTransform()
-obs1_kinbody = env.GetKinBody('obs1')
-obs1_xform_nominal = env.GetKinBody('obs1').GetTransform()
-obs2_kinbody = env.GetKinBody('obs2')
-obs2_xform_nominal = env.GetKinBody('obs2').GetTransform()
+operator_kinbody = env.GetKinBody('operator')
+operator_xform_nominal = env.GetKinBody('operator').GetTransform()
 
 # time the collision checking
 t_start = time.time()
@@ -239,21 +232,15 @@ for i in range(N):
     perturbation1 = np.concatenate([
         np.random.multivariate_normal([0, 0, 0], sigmas[1]),
         [1]])
-    perturbation2 = np.concatenate([
-        np.random.multivariate_normal([0, 0, 0], sigmas[2]),
-        [1]])
 
     obs0_xform_perturbed = copy.copy(obs0_xform_nominal)
     obs0_xform_perturbed[:, 3] += perturbation0
-    obs1_xform_perturbed = copy.copy(obs1_xform_nominal)
-    obs1_xform_perturbed[:, 3] += perturbation1
-    obs2_xform_perturbed = copy.copy(obs2_xform_nominal)
-    obs2_xform_perturbed[:, 3] += perturbation2
+    operator_xform_perturbed = copy.copy(operator_xform_nominal)
+    operator_xform_perturbed[:, 3] += perturbation1
 
     # update transforms
     obs0_kinbody.SetTransform(obs0_xform_perturbed)
-    obs1_kinbody.SetTransform(obs1_xform_perturbed)
-    obs2_kinbody.SetTransform(obs2_xform_perturbed)
+    operator_kinbody.SetTransform(operator_xform_perturbed)
 
     # check if each trajectory is still safe
     prob.SetRobotActiveDOFs()

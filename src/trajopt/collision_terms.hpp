@@ -168,6 +168,12 @@ public:
                                 double precision, double grad_scale_factor, int numsteps,
                                 ConfigurationPtr rad,
                                 const VarArray& vars);
+  OverallCollisionRiskEvaluator(std::vector<std::string> uncertain_body_names,
+                                std::vector<Matrix3d> location_covariances,
+                                double precision, double grad_scale_factor, int numsteps,
+                                ConfigurationPtr rad,
+                                const VarArray& vars,
+                                bool use_max_risk);
   /**
   @brief linearize all risk estimates in terms of robot dofs
   
@@ -199,6 +205,7 @@ public:
   short m_filterMask;
   double m_precision;
   double m_grad_scale_factor;
+  bool m_max_risk;
 };
 
 

@@ -1,0 +1,88 @@
+<Environment>
+  <KinBody name="table">
+    <Body type="static" name="obs0_link">
+      <Translation> 0.4 0.0 -0.01 </Translation>
+      <Geom type="box">
+        <extents> 0.5 0.8 0.01 </extents>
+        <diffuseColor>0.5 0.5 0.5</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="pickup">
+    <Body type="static" name="pickup_link">
+      <Translation> 0.5 -0.5 0.06 </Translation>
+      <Geom type="box">
+        <extents> 0.05 0.05 0.05 </extents>
+        <diffuseColor>0 0 1</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="pickup_pad">
+    <Body type="static" name="pickup_pad_link">
+      <Translation> 0.5 -0.5 0.01 </Translation>
+      <Geom type="box">
+        <extents> 0.08 0.08 0.01 </extents>
+        <diffuseColor>0 1 0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="place_pad">
+    <Body type="static" name="place_pad_link">
+      <Translation> 0.4 0.4 0.01 </Translation>
+      <Geom type="box">
+        <extents> 0.08 0.08 0.01 </extents>
+        <diffuseColor>0 1 0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="obs0">
+    <Body type="static" name="obs0_link">
+      <Translation> 0.7 -0.1 0.1 </Translation>
+      <Geom type="box">
+        <extents> 0.1 0.1 0.1 </extents>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="operator">
+    <Body type="static" name="operator">
+      <Translation> 1.1 0.6 0.0 </Translation>
+      <rotationaxis>1 0 0 -90</rotationaxis>
+      <Geom type="cylinder">
+        <radius> 0.2 </radius>
+        <height> 1 </height>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="operator_head">
+      <Translation> 1.1 0.6 0.6 </Translation>
+      <rotationaxis>1 0 0 -90</rotationaxis>
+      <Geom type="sphere">
+        <radius> 0.2 </radius>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="operator_larm">
+      <Translation> 0.9 0.4 0.3 </Translation>
+      <rotationaxis>0 1 0 45</rotationaxis>
+      <Geom type="box">
+        <extents> 0.05 0.05 0.3 </extents>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="operator_rarm">
+      <Translation> 1.1 0.8 0.2 </Translation>
+      <!-- <rotationaxis>1 0 0 -90</rotationaxis> -->
+      <Geom type="box">
+        <extents> 0.05 0.05 0.3 </extents>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+</Environment>

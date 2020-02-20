@@ -354,11 +354,12 @@ DblVec CollisionChanceConstraint::value(const vector<double>& x) {
 
   // Now compute the relaxed hinge-loss penalties
   DblVec out(1);
-  out[0] = 0;
+  double accumulator = 0.0;
   for (int i=0; i < risks.size(); ++i) {
-    out[0] += risks[i];
+    accumulator += risks[i];
   }
-  out[0] = pospart(out[0] - m_risk_tolerance) * m_coeff;
+  out[0] = pospart(accumulator - m_risk_tolerance) * m_coeff;
+  LOG_DEBUG("Total RISK: %.6f", accumulator);
   return out;
 }
 
@@ -392,7 +393,7 @@ void SingleTimestepCollisionRiskEvaluator::PlotRisks(const std::vector<RiskQuery
       VectorXd one_shot_jacobian = m_rad->PositionJacobian(itRobotOneShot->second, risk_result.ptRobotOneShot);
       VectorXd d_epsilon_d_theta_one_shot = risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose() * one_shot_jacobian;
 
-      VectorXd scaled_nhat_oneshot = risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose();
+      VectorXd scaled_nhat_oneshot = risk_result.d_epsilon_dx_one_shot;
 
       OR::Vector endpoint1 = OR::Vector(
         risk_result.ptRobotOneShot[0] - scaled_nhat_oneshot(0),
@@ -415,7 +416,7 @@ void SingleTimestepCollisionRiskEvaluator::PlotRisks(const std::vector<RiskQuery
         // The combined gradient is the sum of half of each separate gradient
         risk_grad = 0.5 * d_epsilon_d_theta_one_shot + 0.5 * d_epsilon_d_theta_two_shot;
 
-        VectorXd scaled_nhat_twoshot = risk_result.d_epsilon_dx_two_shot * n_hat_two_shot * n_hat_two_shot.transpose();
+        VectorXd scaled_nhat_twoshot = risk_result.d_epsilon_dx_two_shot;
         OR::Vector endpoint2 = OR::Vector(
           risk_result.ptRobotTwoShot[0] - scaled_nhat_twoshot(0),
           risk_result.ptRobotTwoShot[1] - scaled_nhat_twoshot(1),
@@ -621,13 +622,13 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
       // with the robot, n is a vector into the robot normal to the contact with the shadow, and J is the Jacobian
       // of the contact point w.r.t. the joint angles. Then, we have
       //
-      // d_epsilon_d_theta = d_epsilon_d_x * n * n^T * J
+      // d_epsilon_d_theta = d_epsilon_d_x * J
       //
-      // First we need to make sure the contact unit vector is normalized
+      // First we need to make sure the contact unit vector is normalized (Note: this might not be needed anymore)
       Vector3d n_hat_one_shot = risk_result.contact_normal_into_robot_one_shot.normalized();
 
       DblMatrix one_shot_jacobian = m_rad->PositionJacobian(itRobotOneShot->second, risk_result.ptRobotOneShot);
-      VectorXd d_epsilon_d_theta_one_shot = risk_result.d_epsilon_dx_one_shot * n_hat_one_shot * n_hat_one_shot.transpose() * one_shot_jacobian;
+      VectorXd d_epsilon_d_theta_one_shot = risk_result.d_epsilon_dx_one_shot * one_shot_jacobian;
 
       // We need to check if we're in case 3 before calculating the gradient for the second shot
       VectorXd risk_grad;
@@ -636,7 +637,7 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
         Vector3d n_hat_two_shot = risk_result.contact_normal_into_robot_two_shot.normalized();
 
         DblMatrix two_shot_jacobian = m_rad->PositionJacobian(itRobotTwoShot->second, risk_result.ptRobotTwoShot);
-        VectorXd d_epsilon_d_theta_two_shot = risk_result.d_epsilon_dx_two_shot * n_hat_two_shot * n_hat_two_shot.transpose() * two_shot_jacobian;
+        VectorXd d_epsilon_d_theta_two_shot = risk_result.d_epsilon_dx_two_shot * two_shot_jacobian;
 
         // Because the combined one- and two-shot risk estimate is epsilon = 0.5*(epsilon_1 + epsilon_2),
         // The combined gradient is the sum of half of each separate gradient
@@ -646,10 +647,10 @@ void SingleTimestepCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, 
         risk_grad = d_epsilon_d_theta_one_shot;
       }
       risk_grad *= m_grad_scale_factor;
-      LOG_DEBUG("Risk Gradient: %ld elements, %ld vars", risk_grad.size(), m_vars.size());
-      for (int j = 0; j < risk_grad.size(); j++) {
-        LOG_DEBUG("\t %.8f", risk_grad(j));
-      }
+      // LOG_DEBUG("Risk Gradient: %ld elements, %ld vars", risk_grad.size(), m_vars.size());
+      // for (int j = 0; j < risk_grad.size(); j++) {
+      //   LOG_DEBUG("\t %.8f", risk_grad(j));
+      // }
 
       // Now we add risk_grad * (theta - theta_0) to the affine expression
       exprInc(risk, varDot(risk_grad, m_vars));
@@ -676,7 +677,37 @@ OverallCollisionRiskEvaluator::OverallCollisionRiskEvaluator(
   m_cc(CollisionChecker::GetOrCreate(*m_env)),
   m_rad(rad),
   m_vars(vars),
-  m_numsteps(numsteps)
+  m_numsteps(numsteps),
+  m_max_risk(false)
+{
+  // Create a single timestep risk evaluator for every timestep
+  for (int i = 0; i < numsteps; ++i) {
+    m_timestep_risk_evals.push_back(SingleTimestepCollisionRiskEvaluator(
+      uncertain_body_names,
+      location_covariances,
+      precision,
+      grad_scale_factor,
+      rad,
+      vars.row(i)));
+  }
+}
+
+OverallCollisionRiskEvaluator::OverallCollisionRiskEvaluator(
+    std::vector<std::string> uncertain_body_names,
+    std::vector<Matrix3d> location_covariances,
+    double precision,
+    double grad_scale_factor,
+    int numsteps,
+    ConfigurationPtr rad,
+    const VarArray& vars,
+    bool use_max_risk) :
+  m_timestep_risk_evals(),
+  m_env(rad->GetEnv()),
+  m_cc(CollisionChecker::GetOrCreate(*m_env)),
+  m_rad(rad),
+  m_vars(vars),
+  m_numsteps(numsteps),
+  m_max_risk(use_max_risk)
 {
   // Create a single timestep risk evaluator for every timestep
   for (int i = 0; i < numsteps; ++i) {
@@ -701,18 +732,46 @@ OverallCollisionRiskEvaluator::OverallCollisionRiskEvaluator(
 void OverallCollisionRiskEvaluator::CalcRisks(const DblVec& x, DblVec& risks) {
   risks.clear();
 
-  // Create a new vector to store the results of each timestep's risk
-  // Has to be different since CalcRisks clears the given vector
-  DblVec single_step_risks;
-  BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
-    // Get risks for this timestep
-    evaluator.CalcRisks(x, single_step_risks);
+  // There are two modes. If m_max_risk is true, then we only save the maximum risk
+  // for each obstacle (across time). Otherwise, we save all risks for all obstacles.
+  if (m_max_risk) {
+    // Get the number of obstacles, and create a vector to store the maximum risks for each
+    int num_obstacles = m_timestep_risk_evals[0].m_links.size();
+    DblVec max_obstacle_risk;
+    for (int i = 0; i < num_obstacles; i++) {
+      max_obstacle_risk.push_back(0.0);
+    }
 
-    // Save them by appending to risks
-    risks.insert(risks.begin(), single_step_risks.begin(), single_step_risks.end());
+    // Now loop through the timesteps, updating our maximum risk for each obstacle
+    DblVec single_step_risks;
+    BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
+      // Get risks for this timestep
+      evaluator.CalcRisks(x, single_step_risks);
+
+      // Save new obstacle risks if they are higher than the incumbent
+      for (int i = 0; i < num_obstacles; i++) {
+        if (single_step_risks[i] > max_obstacle_risk[i]) {
+          max_obstacle_risk[i] = single_step_risks[i];
+        }
+      }
+    }
+
+    // Now save the maximum risks
+    risks.insert(risks.begin(), max_obstacle_risk.begin(), max_obstacle_risk.end());
+  } else {
+    // Create a new vector to store the results of each timestep's risk
+    // Has to be different since CalcRisks clears the given vector
+    DblVec single_step_risks;
+    BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
+      // Get risks for this timestep
+      evaluator.CalcRisks(x, single_step_risks);
+
+      // Save them by appending to risks
+      risks.insert(risks.begin(), single_step_risks.begin(), single_step_risks.end());
+    }
+    // After this step, risks will be filled with the results of all risk queries
+    // for all timesteps for each uncertain link.
   }
-  // After this step, risks will be filled with the results of all risk queries
-  // for all timesteps for each uncertain link.
 }
 
 /**
@@ -726,18 +785,47 @@ void OverallCollisionRiskEvaluator::CalcRisks(const DblVec& x, DblVec& risks) {
 void OverallCollisionRiskEvaluator::CalcRiskExpressions(const DblVec& x, vector<AffExpr>& exprs) {
   exprs.clear();
 
-  // Create a new vector to store the results of each timestep's risk expressions
-  // Has to be different since CalcRiskExpressions clears the given vector
-  vector<AffExpr> single_step_exprs;
-  BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
-    // Get risk expressions for this timestep
-    evaluator.CalcRiskExpressions(x, single_step_exprs);
+  // There are two modes. If m_max_risk is true, then we only save the maximum risk
+  // for each obstacle (across time). Otherwise, we save all risks for all obstacles.
+  if (m_max_risk) {
+    // Get the number of obstacles, and create a vector to store the maximum risks for each
+    int num_obstacles = m_timestep_risk_evals[0].m_links.size();
+    vector<AffExpr> max_obstacle_risk;
+    for (int i = 0; i < num_obstacles; i++) {
+      max_obstacle_risk.push_back(AffExpr(0.0));
+    }
 
-    // Save them by appending to exprs
-    exprs.insert(exprs.begin(), single_step_exprs.begin(), single_step_exprs.end());
+    // Now loop through the timesteps, saving the expression associated with the maximum
+    // risk
+    vector<AffExpr> single_step_exprs;
+    BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
+      // Get risk expressions for this timestep
+      evaluator.CalcRiskExpressions(x, single_step_exprs);
+
+      // Save new obstacle risks if they are higher than the incumbent
+      for (int i = 0; i < num_obstacles; i++) {
+        if (single_step_exprs[i].constant > max_obstacle_risk[i].constant) {
+          max_obstacle_risk[i] = single_step_exprs[i];
+        }
+      }
+    }
+
+    // Now save the maximum risks
+    exprs.insert(exprs.begin(), max_obstacle_risk.begin(), max_obstacle_risk.end());
+  } else {
+    // Create a new vector to store the results of each timestep's risk expressions
+    // Has to be different since CalcRiskExpressions clears the given vector
+    vector<AffExpr> single_step_exprs;
+    BOOST_FOREACH(SingleTimestepCollisionRiskEvaluator& evaluator, m_timestep_risk_evals) {
+      // Get risk expressions for this timestep
+      evaluator.CalcRiskExpressions(x, single_step_exprs);
+
+      // Save them by appending to exprs
+      exprs.insert(exprs.begin(), single_step_exprs.begin(), single_step_exprs.end());
+    }
+    // After this step, exprs will be filled with the results of all risk queries
+    // for all timesteps for each uncertain link.
   }
-  // After this step, exprs will be filled with the results of all risk queries
-  // for all timesteps for each uncertain link.
 }
 
 /**

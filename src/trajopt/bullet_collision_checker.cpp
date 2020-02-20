@@ -602,7 +602,7 @@ void BulletCollisionChecker::LinkVsAllRiskEstimate_NoUpdate(const KinBody::Link&
     precision,
     m_world,
     filterMask);
-  LOG_DEBUG("ProximityAlert finished: %0.5f", result.epsilon);
+  // LOG_DEBUG("ProximityAlert finished: %0.5f", result.epsilon);
 
   // Now we need to add the risk result to the supplied vector
   // This involves a lot of "tab A -> slot B" to get all the data transferred.

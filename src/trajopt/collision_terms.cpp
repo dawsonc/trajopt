@@ -187,10 +187,10 @@ void PlotCollisions(const std::vector<Collision>& collisions, OR::EnvironmentBas
     else color = RaveVectorf(0,1,0,1);
 
     if (col.cctype == CCType_Between) {
-      handles.push_back(env.drawarrow(col.ptB, col.ptB1, .002, RaveVectorf(0,0,0,1)));
+      // handles.push_back(env.drawarrow(col.ptB, col.ptB1, .002, RaveVectorf(0,0,0,1)));
     }
     OR::Vector ptB = (col.cctype == CCType_Between)  ? ((1-col.time)* col.ptB +col.time*col.ptB1) : col.ptB;
-    handles.push_back(env.drawarrow(col.ptA, ptB, .0025, color));
+    // handles.push_back(env.drawarrow(col.ptA, ptB, .0025, color));
   }
 }
 
@@ -400,7 +400,7 @@ void SingleTimestepCollisionRiskEvaluator::PlotRisks(const std::vector<RiskQuery
         risk_result.ptRobotOneShot[1] - scaled_nhat_oneshot(1),
         risk_result.ptRobotOneShot[2] - scaled_nhat_oneshot(2));
 
-      handles.push_back(env.drawarrow(risk_result.ptRobotOneShot, endpoint1, .0025, color1));
+      // handles.push_back(env.drawarrow(risk_result.ptRobotOneShot, endpoint1, .0025, color1));
 
       // We need to check if we're in case 3 before calculating the gradient for the second shot
       VectorXd risk_grad;
@@ -421,7 +421,7 @@ void SingleTimestepCollisionRiskEvaluator::PlotRisks(const std::vector<RiskQuery
           risk_result.ptRobotTwoShot[0] - scaled_nhat_twoshot(0),
           risk_result.ptRobotTwoShot[1] - scaled_nhat_twoshot(1),
           risk_result.ptRobotTwoShot[2] - scaled_nhat_twoshot(2));
-        handles.push_back(env.drawarrow(risk_result.ptRobotTwoShot, endpoint2, .0025, color2));
+        // handles.push_back(env.drawarrow(risk_result.ptRobotTwoShot, endpoint2, .0025, color2));
       }
     }
   }

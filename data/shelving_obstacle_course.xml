@@ -1,0 +1,142 @@
+<Environment>
+  <KinBody name="table">
+    <Body type="static" name="table_link">
+      <Translation> 0.6 -0.2 -0.01 </Translation>
+      <Geom type="box">
+        <extents> 0.8 0.4 0.01 </extents>
+        <diffuseColor>0.5 0.5 0.5</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="shelf">
+    <Body type="static" name="shelf_backing">
+      <Translation> 0.6 -0.6 0.4 </Translation>
+      <Geom type="box">
+        <extents> 0.8 0.01 0.4 </extents>
+        <diffuseColor>1 1 1</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="robot_backing">
+      <Translation> -0.21 -0.2 0.4 </Translation>
+      <Geom type="box">
+        <extents> 0.01 0.4 0.4 </extents>
+        <diffuseColor>1 1 1</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="shelf0">
+      <Translation> 0.6 -0.5 0.2 </Translation>
+      <Geom type="box">
+        <extents> 0.8 0.1 0.01 </extents>
+        <diffuseColor>0.5 0.5 0.5</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="shelf1">
+      <Translation> 0.6 -0.5 0.4 </Translation>
+      <Geom type="box">
+        <extents> 0.8 0.1 0.01 </extents>
+        <diffuseColor>0.5 0.5 0.5</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="shelf2">
+      <Translation> 0.6 -0.5 0.6 </Translation>
+      <Geom type="box">
+        <extents> 0.8 0.1 0.01 </extents>
+        <diffuseColor>0.5 0.5 0.5</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="picktarget">
+    <Body type="static" name="picktarget_link">
+      <Translation> 0.08 -0.5 0.67 </Translation>
+      <Geom type="sphere">
+        <radius> 0.05 </radius>
+        <diffuseColor>0.0 1 0.0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="placetarget">
+    <Body type="static" name="placetarget_link">
+      <Translation> 0.7 -0.5 0.21 </Translation>
+      <Geom type="box">
+        <extents> 0.05 0.05 0.01 </extents>
+        <diffuseColor>0.0 0.0 1.0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <KinBody name="obs0">
+    <Body type="static" name="obs0_link">
+      <Translation> 0.1 -0.5 0.46 </Translation>
+      <Geom type="box">
+        <extents> 0.05 0.05 0.05 </extents>
+        <diffuseColor>1.0 0.0 0.0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+  <KinBody name="obs1">
+    <Body type="static" name="obs1_link">
+      <Translation> 0.4 -0.5 0.66 </Translation>
+      <Geom type="box">
+        <extents> 0.05 0.05 0.05 </extents>
+        <diffuseColor>1.0 0.0 0.0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+  <KinBody name="obs2">
+    <Body type="static" name="obs2_link">
+      <Translation> 0.8 -0.5 0.46 </Translation>
+      <Geom type="box">
+        <extents> 0.05 0.05 0.05 </extents>
+        <diffuseColor>1.0 0.0 0.0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody>
+
+  <!--<KinBody name="operator">
+    <Body type="static" name="operator">
+      <Translation> 1.1 0.6 0.25 </Translation>
+      <rotationaxis>1 0 0 -90</rotationaxis>
+      <Geom type="cylinder">
+        <radius> 0.2 </radius>
+        <height> 0.5 </height>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="operator_legs">
+      <Translation> 1.1 0.6 -0.15 </Translation>
+      <rotationaxis>1 0 0 -90</rotationaxis>
+      <Geom type="cylinder">
+        <radius> 0.15 </radius>
+        <height> 0.3 </height>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="operator_head">
+      <Translation> 1.1 0.6 0.6 </Translation>
+      <rotationaxis>1 0 0 -90</rotationaxis>
+      <Geom type="sphere">
+        <radius> 0.2 </radius>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="operator_larm">
+      <Translation> 0.9 0.4 0.3 </Translation>
+      <rotationaxis>0 1 0 45</rotationaxis>
+      <Geom type="box">
+        <extents> 0.05 0.05 0.3 </extents>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="operator_rarm">
+      <Translation> 1.1 0.8 0.2 </Translation>
+      <Geom type="box">
+        <extents> 0.05 0.05 0.3 </extents>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+  </KinBody> -->
+
+</Environment>

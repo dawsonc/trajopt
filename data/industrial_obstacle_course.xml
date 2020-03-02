@@ -51,11 +51,20 @@
 
   <KinBody name="operator">
     <Body type="static" name="operator">
-      <Translation> 1.1 0.6 0.0 </Translation>
+      <Translation> 1.1 0.6 0.25 </Translation>
       <rotationaxis>1 0 0 -90</rotationaxis>
       <Geom type="cylinder">
         <radius> 0.2 </radius>
-        <height> 1 </height>
+        <height> 0.5 </height>
+        <diffuseColor>1 0 0</diffuseColor>
+      </Geom>
+    </Body>
+    <Body type="static" name="operator_legs">
+      <Translation> 1.1 0.6 -0.15 </Translation>
+      <rotationaxis>1 0 0 -90</rotationaxis>
+      <Geom type="cylinder">
+        <radius> 0.15 </radius>
+        <height> 0.3 </height>
         <diffuseColor>1 0 0</diffuseColor>
       </Geom>
     </Body>
